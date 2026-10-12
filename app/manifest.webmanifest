@@ -1,0 +1,23 @@
+{
+ "name": "Verteilerplaner",
+ "short_name": "Verteilerplaner",
+ "start_url": "./index.html",
+ "scope": "./",
+ "display": "standalone",
+ "background_color": "#e6e8e9",
+ "theme_color": "#0a6a88",
+ "lang": "de",
+ "icons": [
+  {
+   "src": "icons/icon-192.png",
+   "sizes": "192x192",
+   "type": "image/png"
+  },
+  {
+   "src": "icons/icon-512.png",
+   "sizes": "512x512",
+   "type": "image/png",
+   "purpose": "any maskable"
+  }
+ ]
+}

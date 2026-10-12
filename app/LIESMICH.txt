@@ -1,0 +1,37 @@
+﻿VERTEILERPLANER - lokale Version
+================================
+
+Starten (Windows)
+  1. Ordner "Verteilerplaner" an einen festen Ort kopieren, z. B. Dokumente.
+  2. Doppelklick auf "Verteilerplaner starten.bat".
+     Ein schwarzes Fenster zeigt den lokalen Server, der Browser öffnet
+     http://localhost:8765 . Das Fenster während der Arbeit offen lassen.
+  3. Als App installieren (einmalig): In Edge oder Chrome rechts in der
+     Adressleiste auf das Symbol "App installieren" klicken. Danach startet
+     der Verteilerplaner in einem eigenen Fenster mit Startmenü-Eintrag.
+     Der Server (Schritt 2) muss dafür laufen; offline geht es danach auch,
+     solange die App einmal geladen wurde.
+
+Starten (macOS / Linux)
+  ./verteilerplaner-starten.sh   (benötigt python3)
+
+Ohne Server
+  index.html per Doppelklick öffnen geht auch. Dann klappt aber die
+  App-Installation nicht, und die Daten liegen getrennt von denen unter
+  localhost.
+
+Daten
+  - Projekte und Stammdaten speichert der Browser lokal für die Adresse
+    http://localhost:8765 . Anderer Browser oder anderer Port = andere Daten.
+  - Regelmäßig sichern: Reiter "Projekt & PDF" -> "Projekt speichern",
+    Reiter "Stammdaten" -> "Stammdaten speichern". So überträgst du auch
+    Daten aus der Claude-Version in diese lokale Version (Datei speichern,
+    hier "Projekt öffnen" bzw. "Stammdaten laden").
+  - Browserdaten löschen löscht auch die Projekte. Deshalb die Sicherungen.
+
+Hinweise
+  - Der Server lauscht nur auf diesem Rechner (localhost), Kollegen im
+    Netzwerk erreichen ihn nicht.
+  - Port belegt? In server.ps1 die Zeile "$port = 8765" ändern.
+  - Schriften werden ohne Internet durch Systemschriften ersetzt;
+    alles andere läuft offline.
