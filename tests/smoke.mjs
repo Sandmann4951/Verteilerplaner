@@ -18,6 +18,16 @@ await pg.route('**/*', r => /localhost:8766/.test(r.request().url()) ? r.continu
 await pg.goto('http://localhost:8766/'); await pg.waitForTimeout(600);
 const res = await pg.evaluate(() => { autoAll(); return { rows: state.rows.length, wires: state.wires.length, circuits: state.circuits.length, checks: checks().map(c => c.lvl + ': ' + c.t) }; });
 console.log(res);
+// Szenario 2: 16 FI/LS mit eigener Zuleitung (ohne HLAK), Klemmen X0/X1 und Reihenumbruch
+const res2 = await pg.evaluate(() => { const keep = JSON.stringify(state);
+  state = normalize({ name: 'Test Wallboxen', pitch: 125, rows: [{ te: 12, items: [] }], wires: [], buses: [], circuits: [] });
+  state.auto.outCs = { '16': '4', '32': '6' };
+  for (let i = 0; i < 16; i++) state.rows[0].items.push(mkItem(i < 8 ? 'ADZ316D' : 'ADX432D'));
+  autoAll(); const T = topo();
+  const r = { singles: T.singles.length, x0: state.rows.flatMap(r => r.items).filter(i => i.role === 'feed').length, over: state.rows.filter(r => usedMm(r) > r.te * TE + 0.01).length, cs: [...new Set(state.circuits.map(c => c.cs))].join('/'), bad: checks().filter(c => c.lvl === 'bad').length };
+  state = normalize(JSON.parse(keep)); render(); return r; });
+console.log(res2);
+if (res2.singles !== 16 || res2.x0 !== 80 || res2.over || res2.cs !== '4/6' || res2.bad) { console.error('FEHLER Szenario 2', res2); process.exit(1); }
 await pg.evaluate(() => { ui.tab = 'proj'; ui.menuOpen = true; renderTab(); });
 const [dl] = await Promise.all([pg.waitForEvent('download', { timeout: 20000 }), pg.click('[data-pdfgo="int"]')]);
 mkdirSync(join(ROOT, '..', 'tests', 'out'), { recursive: true });

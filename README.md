@@ -12,6 +12,9 @@ auswählen und die komplette Dokumentation als PDF ausgeben.
 - Auto-Verdrahtung nach festen Regeln: Zuleitung und Phasenschienen unten,
   Abgänge oben; LS hängen am FI links davon; X1 nur für externe Kabel,
   X2 nur für interne N/PE; interne Verbraucher direkt vom LS bzw. Netzteil
+- Eigene Zuleitung je Schutzgerät (z. B. Wallboxen vom Wohnungszähler, ohne HLAK):
+  Zuleitungsklemmen X0 unten oder direkt aufs Gerät, Abgänge X1 oben, N getrennt,
+  Abgangsquerschnitt je Nennstrom einstellbar, überbelegte Reihen werden umgebrochen
 - Querschnittsprüfung (Absicherung, Klemmengröße, Vorsicherung), Kurzschlussprüfung
 - Stromkreise mit Namen am LS, Leitung automatisch aus Polzahl und N
 - Schrankauswahl (Hager, Striebel & John, Hensel) inkl. Feldverteiler,

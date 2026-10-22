@@ -358,6 +358,11 @@ const BASE = [
   {mfr:"Hager",art:"ADS916D",name:"FI/LS-Schalter 1+N B16 30 mA Typ A 6 kA",short:"FI/LS B16",cat:"FILS",w:35,top:["1","N"],bot:["2","N"],bp:32},
   {mfr:"Hager",art:"ADA516D",name:"FI/LS-Schalter 1+N B16 30 mA Typ A 10 kA",short:"FI/LS B16",cat:"FILS",w:35,top:["1","N"],bot:["2","N"],bp:37},
   {mfr:"Siemens",art:"5SV1316-6KK16",name:"FI/LS-Schalter 1+N B16 30 mA Typ A 6 kA, 1 TE",short:"FI/LS B16",cat:"FILS",w:17.5,top:["1","N"],bot:["2","N"],bp:34},
+  /* 4-polige FI/LS (3+N), z. B. für Wallboxen – 4 TE, Daten aus Händlerangaben 10/2026 */
+  {mfr:"Hager",art:"ADZ316D",name:"FI/LS-Schalter 3+N B16 30 mA Typ A 6 kA",short:"FI/LS B16 4p",cat:"FILS",w:70,top:["1","3","5","N"],bot:["2","4","6","N"],bp:100},
+  {mfr:"Hager",art:"ADX432D",name:"FI/LS-Schalter 4-pol B32 30 mA Typ A 10 kA",short:"FI/LS B32 4p",cat:"FILS",w:70,top:["1","3","5","N"],bot:["2","4","6","N"],bp:150},
+  {mfr:"ABB",art:"2CSR256140R1165",name:"FI/LS-Schalter DS203NC B16 A30, 3P+N 30 mA Typ A 6 kA",short:"FI/LS B16 4p",cat:"FILS",w:70,maxCs:25,top:["1","3","5","N"],bot:["2","4","6","N"],bp:123},
+  {mfr:"ABB",art:"2CSR256140R1325",name:"FI/LS-Schalter DS203NC B32 A30, 3P+N 30 mA Typ A 6 kA",short:"FI/LS B32 4p",cat:"FILS",w:70,maxCs:25,top:["1","3","5","N"],bot:["2","4","6","N"],bp:135},
   {mfr:"Typ",art:"LS-1P-B6",name:"LS-Schalter B6 1-pol 6 kA (Steuerstromkreis)",short:"B6",cat:"LS",w:17.5,top:["1"],bot:["2"],bp:5.9},
   {mfr:"Hager",art:"MBN116",name:"LS-Schalter B16 1-pol 6 kA",short:"B16",cat:"LS",w:17.5,top:["1"],bot:["2"],bp:5.9},
   {mfr:"Hager",art:"MBN316",name:"LS-Schalter B16 3-pol 6 kA",short:"B16 3p",cat:"LS",w:52.5,top:["1","3","5"],bot:["2","4","6"],bp:19.5},
@@ -473,6 +478,7 @@ function normalize(s){
   s.cab=Object.assign({res:25,extra:0,mount:"alle",ip:0,mfr:{"Hager":true,"Striebel & John":true,"Hensel":true},art:null},s.cab||{});
   s.auto=Object.assign({feed:"auto",bus:true,layout:"circuit",nMode:"jumper",tL:"2002-1201",tN:"2002-1204",tPE:"2002-1207",end:"249-116"},s.auto||{});
   if(!s.auto._v15){if(s.auto.feed==="10")s.auto.feed="auto";s.auto._v15=true}
+  s.auto.single=Object.assign({mode:"term",cs:"10"},s.auto.single||{}); s.auto.outCs=s.auto.outCs||{}; if(s.auto.wrap==null) s.auto.wrap=true;
   s.buses.forEach(b=>{if(!b.kind)b.kind=art(b.art).kind||"phase"});
   return s;
 }
@@ -603,7 +609,7 @@ function topo(){
     if(b.kind==="jumper"){for(let i=1;i<tt.length;i++)edge(tt[0].key,tt[i].key)}
     else{const by={};tt.forEach(t=>(by[t.phase]=by[t.phase]||[]).push(t.key));Object.values(by).forEach(a=>{for(let i=1;i<a.length;i++)edge(a[0],a[i])})}
   });
-  state.rows.forEach(r=>{const pes=r.items.filter(i=>{const d=art(i.art);return d.look==="term-pe"&&d.top.length}).map(i=>i.uid+"|t|"+art(i.art).top[0]);for(let i=1;i<pes.length;i++)edge(pes[0],pes[i])});
+  {const pes=state.rows.flatMap(r=>r.items).filter(i=>{const d=art(i.art);return d.look==="term-pe"&&d.top.length}).map(i=>i.uid+"|t|"+art(i.art).top[0]);for(let i=1;i<pes.length;i++)edge(pes[0],pes[i])}
   info.forEach((x,u)=>passPairs(x.d).forEach(([a,b])=>edge(u+"|t|"+a,u+"|b|"+b,true)));
   let E=null; for(const [u,x] of info){ if(x.d.cat==="Einspeisung"&&(x.d.bot.includes("L1")||x.d.top.includes("L1"))){E=u;break} }
   const potName=new Map(), conflicts=[];
@@ -611,15 +617,17 @@ function topo(){
   potName.forEach(s=>{if(s.size>1)conflicts.push([...s])});
   const wirePot=new Map(); state.wires.forEach(w=>{const r=pot.f(w.a);if(!wirePot.has(r))wirePot.set(r,w.p)});
   const busPot=new Map(); state.buses.filter(b=>b.kind!=="jumper").forEach(b=>busTerms(b).forEach(t=>{const r=pot.f(t.key);if(!busPot.has(r))busPot.set(r,t.phase)}));
-  const potOf=k=>{const r=pot.f(k);const s=potName.get(r);if(s)return [...s][0];return wirePot.get(r)||busPot.get(r)||null};
+  /* eigene Zuleitung direkt aufs Gerät: Außenleiter aus der Zuleitung (keine Ader im Schrank) */
+  const fPot=new Map(); info.forEach((x,u)=>{const f=u!==E&&ownFeed(x.it);if(!f)return;const sd=f.side||"b";const l=sd==="t"?x.d.top:x.d.bot;
+    const ph=l.filter(t=>t!=="N"&&ttype(x.d,sd,t)==="ac"&&!isCoil(t));const P=f.ph||(ph.length>=3?["L1","L2","L3"]:["L1"]);
+    ph.forEach((t,i)=>{const r=pot.f(u+"|"+sd+"|"+t);if(!fPot.has(r))fPot.set(r,P[i%P.length])});if(l.includes("N")){const r=pot.f(u+"|"+sd+"|N");if(!fPot.has(r))fPot.set(r,"N")}});
+  const potOf=k=>{const r=pot.f(k);const s=potName.get(r);if(s)return [...s][0];return wirePot.get(r)||busPot.get(r)||fPot.get(r)||null};
   const members=new Map(); info.forEach((x,u)=>keysOf(u).forEach(k=>{const r=net.f(k);if(!members.has(r))members.set(r,[]);members.get(r).push(k)}));
   const netOf=k=>members.get(net.f(k))||[k];
   const parent=new Map(), children=new Map(), inSide=new Map(), order=[];
-  if(E){
-    const cnt=sd=>keysOf(E).filter(k=>k.split("|")[1]===sd&&netOf(k).length>1).length;
-    const outE=cnt("b")>=cnt("t")?"b":"t";
-    inSide.set(E,outE==="b"?"t":"b");
-    const q=[E], seen=new Set([E]); order.push(E);
+  const singles=[]; info.forEach((x,u)=>{if(u!==E&&ownFeed(x.it))singles.push(u)});
+  const pos0=u=>{const x=info.get(u);return x.ri*1000+x.k}; singles.sort((a,b)=>pos0(a)-pos0(b));
+  const walk=(q,seen)=>{
     while(q.length){
       const D=q.shift(), xd=info.get(D), out=inSide.get(D)==="t"?"b":"t";
       (out==="t"?xd.d.top:xd.d.bot).forEach(t=>{
@@ -632,11 +640,18 @@ function topo(){
           if(THROUGH.has(cd.cat)&&cd.cat!=="Klemmen") q.push(u);
         });
       });
-    }
+    }};
+  const seenAll=new Set([E,...singles].filter(Boolean));
+  if(E){
+    const cnt=sd=>keysOf(E).filter(k=>k.split("|")[1]===sd&&netOf(k).length>1).length;
+    const outE=cnt("b")>=cnt("t")?"b":"t";
+    inSide.set(E,outE==="b"?"t":"b");
+    order.push(E); walk([E],seenAll);
   }
+  singles.forEach(u=>{inSide.set(u,ownFeed(info.get(u).it).side||"b");order.push(u);walk([u],seenAll)});
   const pos=u=>{const x=info.get(u);return x?x.ri*1000+x.k:1e9};
   children.forEach(a=>a.sort((p,q)=>pos(p)-pos(q)));
-  topoCache={info,E,potOf,netOf,parent,children,inSide,order,conflicts,pos,keysOf};
+  topoCache={info,E,singles,potOf,netOf,parent,children,inSide,order,conflicts,pos,keysOf};
   return topoCache;
 }
 const outSideOf = (T,u) => T.inSide.has(u) ? (T.inSide.get(u)==="t"?"b":"t") : "t";
@@ -649,13 +664,15 @@ function checks(){
   state.rows.forEach((r,ri)=>{if(usedMm(r)>r.te*TE+.01)out.push({lvl:"bad",t:`Reihe ${ri+1} ist um ${fmt((usedMm(r)-r.te*TE)/TE)} TE überbelegt.`})});
   T.conflicts.forEach(c=>out.push({lvl:"bad",t:`Kurzschluss: ${c.join(" und ")} sind galvanisch verbunden. Adern und Phasenschienen prüfen.`}));
   const anyDev=[...T.info.values()].some(x=>["FI","LS"].includes(x.d.cat));
-  {const f=cabFit();if(f&&!f.ok){const b=cabCandidates()[0];out.push({lvl:"bad",t:`Gewählter Schrank ${f.d.art} (${f.c.rows} × ${f.c.per} TE) reicht nicht: Planung hat ${Math.max(f.need,f.rows)} Reihen.${b?` Vorschlag: ${b.d.mfr} ${b.d.art} (${b.d.cab.rows} × ${b.d.cab.per} TE).`:""}`})}}
+  {const f=cabFit();if(f&&!f.ok){const b=cabCandidates()[0];out.push({lvl:"bad",t:`Gewählter Schrank ${f.d.art} (${f.c.fields>1?f.c.fields+" Felder × ":""}${f.c.rows} Reihen, ${cabFieldTE(f.c)} TE je Reihe) reicht nicht: Planung braucht ${Math.max(f.need,f.rows)} Reihen à ${cabFieldTE(f.c)} TE.${b?` Vorschlag: ${b.d.mfr} ${b.d.art} (${b.d.cab.rows} × ${b.d.cab.per} TE).`:""}`})}}
   state.circuits.forEach(c=>{if(c.internal||!c.ls||!findItem(c.ls))return;const need=cableCores(circuitCable(c)),have=cableCores(c.cable);
     if(have!=null&&need!=null&&have<need)out.push({lvl:"warn",t:`Stromkreis ${circLabel(c)}: Leitung ${c.cable} hat ${have} Adern, nötig sind ${need} (${circuitCable(c)}).`})});
   if(!state.cab.art&&state.rows.some(r=>r.items.length)){const b=cabCandidates()[0];out.push({lvl:"warn",t:`Kein Schrank gewählt – Gehäuse fehlt in Stückliste und EK.${b?` Vorschlag: ${b.d.mfr} ${b.d.art} (${b.cap} TE).`:""}`})}
-  if(!T.E&&anyDev) out.push({lvl:"warn",t:"Keine Einspeisung (Hauptleitungsklemme) gesetzt. Stromlaufplan und Auto-Verdrahtung brauchen sie."});
-  if(T.E) T.info.forEach((x,u)=>{if(["FI","FILS","LS","Schalten"].includes(x.d.cat)&&!T.parent.has(u))out.push({lvl:"warn",t:`${itemName(x.it)} (${x.d.short||x.d.art}) ist nicht eingespeist.`})});
-  if(T.E) T.info.forEach((x,u)=>{if(x.d.cat!=="LS"||!T.parent.has(u))return;let p=T.parent.get(u),ok=false;while(p){const c=T.info.get(p).d.cat;if(c==="FI"||c==="FILS"){ok=true;break}p=T.parent.get(p)}
+  if(!T.E&&!T.singles.length&&anyDev) out.push({lvl:"warn",t:"Keine Einspeisung gesetzt: Hauptleitungsklemme setzen oder Auto-Verdrahtung ausführen – ohne HLAK bekommt jedes Schutzgerät eine eigene Zuleitung."});
+  T.singles.forEach(u=>{const x=T.info.get(u),f=ownFeed(x.it);if(f.mode==="direct"||state.rows.some(r=>r.items.some(i=>i.feedOf===u)))return;out.push({lvl:"warn",t:`${itemName(x.it)}: eigene Zuleitung über Klemmen X0 eingestellt, Klemmen fehlen noch – Auto-Verdrahtung ausführen.`})});
+  T.singles.forEach(u=>{const x=T.info.get(u),f=ownFeed(x.it);if(f.mode==="direct"&&x.d.maxCs&&csN(f.cs)>x.d.maxCs+1e-9)out.push({lvl:"warn",t:`${itemName(x.it)}: Zuleitung ${f.cs} mm² passt nicht direkt ins Gerät (max. ${csFmt(x.d.maxCs)} mm²) – Zuleitung über Klemmen X0 führen.`})});
+  if(T.E||T.singles.length) T.info.forEach((x,u)=>{if(["FI","FILS","LS","Schalten"].includes(x.d.cat)&&!T.parent.has(u)&&!T.singles.includes(u)&&u!==T.E)out.push({lvl:"warn",t:`${itemName(x.it)} (${x.d.short||x.d.art}) ist nicht eingespeist.`})});
+  if(T.E||T.singles.length) T.info.forEach((x,u)=>{if(x.d.cat!=="LS"||!T.parent.has(u))return;let p=T.parent.get(u),ok=false;while(p){const c=T.info.get(p).d.cat;if(c==="FI"||c==="FILS"){ok=true;break}p=T.parent.get(p)}
     if(!ok)out.push({lvl:"warn",t:`${itemName(x.it)} (${x.d.short||x.d.art}) hängt nicht hinter einem FI – kein Fehlerstromschutz.`})});
   const cnt=new Map(); state.wires.forEach(w=>[w.a,w.b].forEach(k=>cnt.set(k,(cnt.get(k)||0)+1)));
   state.buses.filter(b=>b.kind!=="jumper").forEach(b=>busTerms(b).forEach(t=>cnt.set(t.key,(cnt.get(t.key)||0)+1)));
@@ -712,26 +729,27 @@ function blocksOfRow(r){
 }
 function flowRow(r,per){const rows=[];let cur=null;blocksOfRow(r).forEach(b=>{if(!cur||(cur.w+b.w>per+1e-6&&cur.items.length)){cur={w:0,items:[]};rows.push(cur)}cur.w+=b.w;cur.items.push(...b.items)});return rows}
 function cabNeed(){const used=state.rows.reduce((s,r)=>s+usedMm(r),0)/TE;const req=Math.ceil(used*(1+(+state.cab.res||0)/100)-1e-9)+(+state.cab.extra||0);return {used,req}}
+const cabSlots=c=>c.rows*(c.fields||1), cabFieldTE=c=>c.per/(c.fields||1);
 function cabFit(){const d=state.cab.art?art(state.cab.art):null;if(!d||!d.cab)return null;const c=d.cab;
-  const filled=state.rows.filter(r=>r.items.length);const need=filled.reduce((s,r)=>s+flowRow(r,c.per).length,0);
-  const over=filled.some(r=>usedMm(r)/TE>c.per+1e-6);const cap=c.rows*c.per;
-  return {d,c,cap,need,ok:need<=c.rows&&!over&&state.rows.length<=c.rows,rows:state.rows.length}}
+  const filled=state.rows.filter(r=>r.items.length);const need=filled.reduce((s,r)=>s+flowRow(r,cabFieldTE(c)).length,0);
+  const over=filled.some(r=>usedMm(r)/TE>cabFieldTE(c)+1e-6);const cap=c.rows*c.per;
+  return {d,c,cap,need,ok:need<=cabSlots(c)&&!over&&state.rows.length<=cabSlots(c),rows:state.rows.length}}
 function capTE(){const f=cabFit();return f?f.cap:state.rows.reduce((s,r)=>s+r.te,0)}
 function cabCandidates(){
   const {req}=cabNeed(); const filled=state.rows.filter(r=>r.items.length);
   return catalog().filter(d=>d.cab).map(d=>{
-    const c=d.cab; const need=filled.reduce((s,r)=>s+flowRow(r,c.per).length,0);
-    const keep=filled.length<=c.rows&&filled.every(r=>usedMm(r)/TE<=c.per+1e-6)&&state.rows.length<=c.rows;
-    const ok=need<=c.rows&&c.rows*c.per>=req;
+    const c=d.cab, fw=cabFieldTE(c), slots=cabSlots(c); const need=filled.reduce((s,r)=>s+flowRow(r,fw).length,0);
+    const keep=filled.length<=slots&&filled.every(r=>usedMm(r)/TE<=fw+1e-6)&&state.rows.length<=slots;
+    const ok=need<=slots&&c.rows*c.per>=req;
     return {d,need,keep,ok,cap:c.rows*c.per};
   }).filter(x=>x.ok&&state.cab.mfr[x.d.mfr]!==false&&(state.cab.mount==="alle"||x.d.cab.mount===state.cab.mount)&&x.d.cab.ip>=(+state.cab.ip||0))
     .sort((a,b)=>a.cap-b.cap||((priceOf([a.d.art])||{p:1e9}).p-(priceOf([b.d.art])||{p:1e9}).p));
 }
 function applyCab(a){
-  const d=art(a), c=d.cab; const rows=[];
-  state.rows.forEach(r=>{if(!r.items.length)return;flowRow(r,c.per).forEach(fr=>rows.push({id:uid(),te:c.per,items:fr.items}))});
-  while(rows.length<c.rows) rows.push({id:uid(),te:c.per,items:[]});
-  state.rows=rows; state.cab.art=a; if(!state.info.ip) state.info.ip="IP"+c.ip; ui.active=0; invalidate(); render(); toast(`${d.mfr} ${d.art} übernommen – ${c.rows} Reihen à ${c.per} TE`);
+  const d=art(a), c=d.cab; const rows=[]; const fw=cabFieldTE(c), slots=cabSlots(c);
+  state.rows.forEach(r=>{if(!r.items.length)return;flowRow(r,fw).forEach(fr=>rows.push({id:uid(),te:fw,items:fr.items,auto:r.auto,feedRow:r.feedRow}))});
+  while(rows.length<slots) rows.push({id:uid(),te:fw,items:[]});
+  state.rows=rows; state.cab.art=a; if(!state.info.ip) state.info.ip="IP"+c.ip; ui.active=0; invalidate(); render(); toast(`${d.mfr} ${d.art} übernommen – ${c.fields>1?`${c.fields} Felder × ${c.rows} Reihen à ${fw} TE (${slots} Reihen im Plan)`:`${c.rows} Reihen à ${c.per} TE`}`);
 }
 
 /* ---------- Auto-Verdrahtung ---------- */
@@ -747,6 +765,54 @@ function applyCircuitCs(c,old){
     const na=termFor(d.art,c.cs),nd=art(na);if(na!==d.art&&nd.top.join()===d.top.join()&&nd.bot.join()===d.bot.join()){f.item.art=na;n++}});
   return n;
 }
+/* ---------- Einzeleinspeisung: Gerät mit eigener Zuleitung (z. B. vom Wohnungszähler), ohne HLAK ---------- */
+const FEED_CATS=["FI","FILS","LS"];
+const ownFeed=it=>it&&it.feed&&FEED_CATS.includes(art(it.art).cat)?it.feed:null;
+const outCsFor=a=>(state.auto.outCs||{})[a]||csFor(a);
+function feedPoles(T,u){return inTerms(T,u).length}
+function feedCable(T,u){const it=T.info.get(u).it,f=ownFeed(it);const n=inTerms(T,u).length+1;return `NYM-J ${n}x${(f&&f.cs)||"10"}`}
+function feedSrc(it){const f=ownFeed(it);return (f&&f.src)||("Zuleitung "+(it.bmk||"").replace(/^-/,""))}
+function dropFeedTerms(){const drop=new Set();state.rows.forEach(r=>r.items.forEach(i=>{if(i.role==="feed")drop.add(i.uid)}));if(!drop.size)return;
+  state.wires=state.wires.filter(w=>!drop.has(w.a.split("|")[0])&&!drop.has(w.b.split("|")[0]));
+  state.rows.forEach(r=>{r.items=r.items.filter(i=>!drop.has(i.uid))});
+  state.rows=state.rows.filter(r=>!(r.auto&&!r.items.some(i=>art(i.art).cat!=="Sonstiges")));if(!state.rows.length)state.rows.push({id:uid(),te:12,items:[]});invalidate()}
+/* Zuleitungsklemmen X0 unten im Schrank: je Gerät L…, N, PE (Modus „Klemmen“) bzw. nur PE (Modus „direkt“) */
+function autoSingleFeeds(){
+  dropFeedTerms(); let T=topo(); if(!T.singles.length) return {nT:0,nW:0};
+  const A=state.auto, endArt=A.end; let nT=0,nW=0,rot=0;
+  let ri=-1; for(let i=state.rows.length-1;i>=0;i--){if(state.rows[i].feedRow){ri=i;break}}
+  if(ri<0){state.rows.push({id:uid(),te:Math.max(...state.rows.map(r=>r.te),12),items:[],auto:true,feedRow:true});ri=state.rows.length-1}
+  const row=state.rows[ri].items;
+  const plan=[];
+  T.singles.forEach(u=>{const it=T.info.get(u).it,f=ownFeed(it),cs=f.cs||"10";const ins=inTerms(T,u);
+    const ph=ins.filter(k=>!k.endsWith("|N"));const P=ph.length>=3?["L1","L2","L3"]:[["L1","L2","L3"][rot++%3]]; f.ph=P;
+    const conn=[];
+    if(f.mode!=="direct") ins.forEach(k=>{const isN=k.endsWith("|N");const t=mkItem(termFor(isN?A.tN:A.tL,cs));conn.push({t,k,p:isN?"N":P[ph.indexOf(k)%P.length]})});
+    /* Gerät ohne N-Pol (z. B. LS 1-polig): N der Zuleitung über eigene Klemme X0 direkt zur N-Abgangsklemme */
+    const c=state.circuits.find(c=>c.ls===u);
+    if(!ins.some(k=>k.endsWith("|N"))&&c&&c.tN&&findItem(c.tN)){const t=mkItem(termFor(A.tN,cs));const nt=findItem(c.tN).item;conn.push({t,k:c.tN+"|t|"+art(nt.art).top[0],p:"N"})}
+    const pe=mkItem(termFor(A.tPE,cs));
+    plan.push({u,cs,conn,pe});
+  });
+  row.push(mkItem(endArt));
+  plan.forEach(pl=>{[...pl.conn.map(c=>c.t),pl.pe].forEach(t=>{t.role="feed";t.strip="X0";t.feedOf=pl.u;t.bmk="";row.push(t);t.bmk=nextBmk(art(t.art),"X0");nT++})});
+  row.push(mkItem(endArt));
+  invalidate();
+  plan.forEach(pl=>pl.conn.forEach(c=>{if(addWire(c.t.uid+"|t|"+art(c.t.art).top[0],c.k,c.p,pl.cs))nW++}));
+  invalidate(); return {nT,nW};
+}
+/* Überbelegte Reihen umbrechen (Phasenschienen bleiben zusammen); Klemmenreihen bekommen je Reihe Endklammern */
+function wrapRows(){
+  const endArt=state.auto.end, ew=art(endArt).w/TE; let n=0;
+  for(let i=state.rows.length-1;i>=0;i--){const r=state.rows[i]; if(usedMm(r)<=r.te*TE+0.01) continue;
+    const isTermRow=r.items.length&&r.items.every(it=>{const c=art(it.art).cat;return c==="Klemmen"||it.art===endArt});
+    let parts;
+    if(isTermRow){const core={...r,items:r.items.filter(it=>it.art!==endArt)};parts=flowRow(core,r.te-2*ew).map(p=>({id:uid(),te:r.te,items:[mkItem(endArt),...p.items,mkItem(endArt)],auto:r.auto,feedRow:r.feedRow}))}
+    else parts=flowRow(r,r.te).map(p=>({id:uid(),te:r.te,items:p.items,auto:r.auto}));
+    if(parts.length>1){state.rows.splice(i,1,...parts);n+=parts.length-1}
+  }
+  if(n) invalidate(); return n;
+}
 const AUTO_CABLE=/^NYM-J \d+x[\d,]+$/;
 function cableCores(t){const m=/(\d+)\s*[x×]\s*[\d,]+/.exec(t||"");return m?+m[1]:null}
 function syncCables(){state.circuits.forEach(c=>{if(c.internal||!c.ls||!findItem(c.ls))return;
@@ -755,10 +821,22 @@ function syncCables(){state.circuits.forEach(c=>{if(c.internal||!c.ls||!findItem
 function addWire(a,b,p,cs){if(state.wires.some(w=>(w.a===a&&w.b===b)||(w.a===b&&w.b===a)))return null;const w={id:uid(),a,b,p,cs};state.wires.push(w);return w}
 const connected = k => state.wires.some(w=>w.a===k||w.b===k) || state.buses.some(b=>busTerms(b).some(t=>t.key===k));
 function autoFromLayout(){
-  invalidate(); let T=topo(); const E=T.E;
-  if(!E){toast("Bitte zuerst eine Hauptleitungsklemme (Einspeisung) setzen");return null}
-  const Ed=art(findItem(E).item.art); const eOut=Ed.top.includes("L1")?"t":"b";
+  dropFeedTerms(); invalidate(); let T=topo(); const E=T.E;
   const A=state.auto, mode=A.fiFeed==="chain"?"chain":"bus";
+  let nS=0;
+  if(!E){
+    /* keine Hauptleitungsklemme: jedes FI, FI/LS und jeder LS ohne FI davor bekommt eine eigene Zuleitung */
+    let fi=null, any=false;
+    state.rows.forEach(r=>{fi=null;r.items.forEach(it=>{const c=art(it.art).cat;
+      if(c==="FI"){fi=it;any=true;if(!it.feed){it.feed={...A.single};nS++}}
+      else if(c==="FILS"){fi=null;any=true;if(!it.feed){it.feed={...A.single};nS++}}
+      else if(c==="LS"){any=true;if(!fi&&!it.feed){it.feed={...A.single};nS++}}
+      else if(c!=="Klemmen"&&c!=="Sonstiges"&&c!=="Zubehör") fi=null})});
+    if(!any){toast("Bitte zuerst eine Hauptleitungsklemme (Einspeisung) oder Schutzgeräte setzen");return null}
+    invalidate(); T=topo();
+  }
+  const isSingle=u=>{const f=findItem(u);return !!(f&&ownFeed(f.item))};
+  const Ed=E?art(findItem(E).item.art):null; const eOut=Ed&&Ed.top.includes("L1")?"t":"b";
   const groups=[]; let cur=null; const direct={ls:[]}; const fils=[];
   state.rows.forEach((r,ri)=>r.items.forEach((it,k)=>{const c=art(it.art).cat;
     if(c==="FI"){cur={fi:it,ls:[],ri};groups.push(cur)}
@@ -769,7 +847,7 @@ function autoFromLayout(){
   const dev=k=>k.split("|")[0];
   const fiSet=new Set(groups.map(g=>g.fi.uid)), filsSet=new Set(fils.map(i=>i.uid));
   const lsSet=new Set([...groups.flatMap(g=>g.ls),...direct.ls].map(x=>x.it.uid));
-  const feeders=new Set([...fiSet,...filsSet]);
+  const feeders=new Set([...fiSet,...filsSet].filter(u=>!isSingle(u)));
   /* Einspeise-Ebene neu aufbauen */
   state.wires=state.wires.filter(w=>{const x=dev(w.a),y=dev(w.b);const pair=(p,q)=>(p(x)&&q(y))||(p(y)&&q(x));
     const isE=u=>u===E, isP=u=>feeders.has(u), isLS=u=>lsSet.has(u);
@@ -781,7 +859,8 @@ function autoFromLayout(){
   const topFed=new Set(groups.filter(g=>{const n=nextIt(g.fi.uid);return n&&g.ls.some(x=>x.it.uid===n.uid)}).map(g=>g.fi.uid));
   const remap=(u,to)=>{const d=art(findItem(u).item.art);const from=to==="t"?"b":"t";const fl=from==="t"?d.top:d.bot,tl=to==="t"?d.top:d.bot;
     state.wires.forEach(w=>["a","b"].forEach(e=>{const [wu,sd,t]=w[e].split("|");if(wu!==u||sd!==from)return;const i=fl.indexOf(t);if(i>=0&&tl[i])w[e]=u+"|"+to+"|"+tl[i]}))};
-  remap(E,"t"); lsSet.forEach(u=>remap(u,"t")); filsSet.forEach(u=>remap(u,"t")); fiSet.forEach(u=>remap(u,topFed.has(u)?"b":"t"));
+  [...fiSet,...filsSet,...lsSet].forEach(u=>{const it=findItem(u).item;if(ownFeed(it))it.feed.side=topFed.has(u)?"t":"b"});
+  if(E) remap(E,"t"); lsSet.forEach(u=>remap(u,"t")); filsSet.forEach(u=>remap(u,"t")); fiSet.forEach(u=>remap(u,topFed.has(u)?"b":"t"));
   const potsOf=(it,side)=>{const l=art(it.art)[side==="t"?"top":"bot"];const ph=l.filter(t=>t!=="N");const P=ph.length>=3?["L1","L2","L3"]:[["L1","L2","L3"][rot++%3]];const m={};ph.forEach((t,i)=>m[t]=P[i%P.length]);if(l.includes("N"))m.N="N";return m};
   const mk=()=>({L1:E+"|"+eOut+"|L1",L2:E+"|"+eOut+"|L2",L3:E+"|"+eOut+"|L3",N:E+"|"+eOut+"|N"});
   const srcB=mk(), srcT=mk();
@@ -828,15 +907,15 @@ function autoFromLayout(){
   invalidate();
   const lsAll=[...groups.flatMap(g=>g.ls),...direct.ls,...fils.map(it=>({it}))];
   lsAll.forEach(x=>{if(state.circuits.some(c=>c.ls===x.it.uid))return;const d=art(x.it.art);const n=state.circuits.length+1;
-    state.circuits.push({id:uid(),name:`Stromkreis ${n}`,load:"",ls:x.it.uid,cs:csFor(lsAmps(d)),withN:true,cable:"",tN:null,tPE:null});nC++});
+    state.circuits.push({id:uid(),name:`Stromkreis ${n}`,load:"",ls:x.it.uid,cs:outCsFor(lsAmps(d)),withN:true,cable:"",tN:null,tPE:null});nC++});
   state.circuits.forEach(c=>{if(!c.cable)c.cable=circuitCable(c)});
-  return {nW,nB,nC};
+  return {nW,nB,nC,nS};
 }
 /* Klemmen-Ebene neu aufbauen: Adern Gerät→Klemme oben und Brücken entfernen, bisherige Klemmen-Zuordnung merken */
 function resetTerminalWiring(){
   invalidate(); const T=topo();
   const pw=new Set([...T.info.values()].filter(x=>["Einspeisung","FI","FILS","LS"].includes(x.d.cat)).map(x=>x.it.uid));
-  const isK=u=>T.info.has(u)&&T.info.get(u).d.cat==="Klemmen";
+  const isK=u=>T.info.has(u)&&T.info.get(u).d.cat==="Klemmen"&&T.info.get(u).it.role!=="feed";
   const prev=new Map();
   state.circuits.forEach(c=>{const L=(T.children.get(c.ls)||[]).filter(u=>isK(u)&&u!==c.tN&&u!==c.tPE);prev.set(c.id,{L,N:c.tN,PE:c.tPE})});
   state.wires=state.wires.filter(w=>{const a=w.a.split("|"),b=w.b.split("|");const ka=isK(a[0]),kb=isK(b[0]);
@@ -863,10 +942,10 @@ function resetTerminalWiring(){
 }
 function autoTerminals(prev){
   invalidate(); let T=topo();
-  if(!T.E){toast("Bitte zuerst eine Hauptleitungsklemme (Einspeisung) setzen");return null}
+  if(!T.E&&!T.singles.length){toast("Bitte zuerst eine Hauptleitungsklemme (Einspeisung) setzen");return null}
   const todo=state.circuits.filter(c=>!c.internal&&c.ls&&T.info.has(c.ls)&&!(T.children.get(c.ls)||[]).some(u=>T.info.get(u).d.cat==="Klemmen"));
   if(!todo.length) return {nT:0,nW:0};
-  let ri=-1,best=0; state.rows.forEach((r,i)=>{const n=r.items.filter(it=>art(it.art).cat==="Klemmen"&&it.strip!=="X2").length;if(n>best){best=n;ri=i}});
+  let ri=-1,best=0; state.rows.forEach((r,i)=>{if(r.feedRow)return;const n=r.items.filter(it=>art(it.art).cat==="Klemmen"&&it.strip!=="X2"&&it.role!=="feed").length;if(n>best){best=n;ri=i}});
   if(ri<0){
     /* Abgangsklemmen oben im Schrank: oberste Reihe, falls leer, sonst neue Reihe ganz oben */
     if(state.rows.length&&!state.rows[0].items.length) ri=0;
@@ -899,9 +978,9 @@ function autoTerminals(prev){
   batch.forEach(({c,outs,nOut,Ls,N,PE})=>{
     outs.forEach((k,i)=>{const t=Ls[i];if(addWire(k,t.uid+"|t|"+art(t.art).top[0],T.potOf(k)||"L1",c.cs))nW++});
     let p=T.parent.get(c.ls); while(p&&art(findItem(p).item.art).cat!=="FI"&&p!==T.E) p=T.parent.get(p);
-    const src=p||T.E;
+    const src=p||T.E; if(!src&&N&&!nOut){c.tN=N.uid;}
     if(N&&nOut){c.tN=N.uid; if(addWire(nOut,N.uid+"|t|"+art(N.art).top[0],"N",c.cs))nW++}
-    else if(N){c.tN=N.uid; if(!nGroups.has(src))nGroups.set(src,[]); nGroups.get(src).push(N)}
+    else if(N&&src){c.tN=N.uid; if(!nGroups.has(src))nGroups.set(src,[]); nGroups.get(src).push(N)}
     c.tPE=PE.uid;
     if(!c.cable) c.cable=circuitCable(c);
   });
@@ -923,9 +1002,9 @@ function autoTerminals(prev){
       }
     } else list.forEach(n=>{const c=state.circuits.find(x=>x.tN===n.uid);if(addWire(nk,n.uid+"|t|"+art(n.art).top[0],"N",c?c.cs:"2,5"))nW++});
   });
-  const Ed=art(findItem(T.E).item.art); const eo="t"; /* Abgänge immer oben */
+  const eo="t"; /* Abgänge immer oben */
   const pes=row.filter(i=>art(i.art).look==="term-pe");
-  if(pes.length&&!pes.some(i=>connected(i.uid+"|t|"+art(i.art).top[0]))){
+  if(T.E&&pes.length&&!pes.some(i=>connected(i.uid+"|t|"+art(i.art).top[0]))){
     /* PE-Einspeisung: Klemme passend zum Zuleitungsquerschnitt, übrige PE-Klemmen über die Tragschiene */
     let pf=pes.find(i=>(art(i.art).maxCs||99)>=csN(feedCs())-1e-9);
     if(!pf){pf=mkItem(termFor(state.auto.tPE,feedCs()));const k0=row.findIndex(i=>i.art===endArt);row.splice(k0>=0?k0+1:0,0,pf);pf.bmk="";pf.bmk=nextBmk(art(pf.art));nT++}
@@ -1034,16 +1113,20 @@ function supplyLoads(){
   return {nW,nT,notes};
 }
 function circLabel(c){const f=c&&c.ls&&findItem(c.ls);const b=f?(f.item.bmk||"").replace(/^-/,""):"";return state.auto.circPrefix&&b&&c.name?`${b} – ${c.name}`:(c?c.name:"")}
-function circuitFor(u,create){let c=state.circuits.find(x=>x.ls===u);if(!c&&create){const d=art(findItem(u).item.art);c={id:uid(),name:"",load:"",ls:u,cs:csFor(lsAmps(d)),withN:true,cable:"",tN:null,tPE:null};c.cable=circuitCable(c);state.circuits.push(c)}return c}
+function circuitFor(u,create){let c=state.circuits.find(x=>x.ls===u);if(!c&&create){const d=art(findItem(u).item.art);c={id:uid(),name:"",load:"",ls:u,cs:outCsFor(lsAmps(d)),withN:true,cable:"",tN:null,tPE:null};c.cable=circuitCable(c);state.circuits.push(c)}return c}
 function renumberStrips(){const n={};state.rows.forEach(r=>r.items.forEach(i=>{if(art(i.art).cat!=="Klemmen"||!/^X\d+:\d+$/.test(i.bmk||""))return;const sx=i.strip||i.bmk.split(":")[0];n[sx]=(n[sx]||0)+1;i.bmk=sx+":"+n[sx]}))}
 function autoAll(){
+  const w0=state.auto.wrap!==false?wrapRows():0;
   const cc=ensureControlCircuit();
   const a=autoFromLayout(); if(!a){render();return}
+  autoSingleFeeds(); /* zuerst Zuleitungen, damit die Abgänge die richtigen Außenleiter bekommen */
   const b=autoTerminals(resetTerminalWiring())||{nT:0,nW:0};
   const s=supplyLoads();
+  const z=autoSingleFeeds(); b.nW+=z.nW;
+  const w1=state.auto.wrap!==false?wrapRows():0;
   renumberStrips();
   ui.tab="circ"; render();
-  toast(`Auto-Verdrahtung: ${a.nC} Stromkreise${cc?" (inkl. Steuerstromkreis "+uidName(cc.ls)+")":""}, ${b.nT} Klemmen X1${s.nT?` + ${s.nT} Klemmen X2`:""}, ${a.nW+b.nW+s.nW} Adern, ${a.nB} Phasenschienen${s.notes.length?" · "+s.notes.join(" · "):""}`);
+  toast(`Auto-Verdrahtung: ${a.nC} Stromkreise${cc?" (inkl. Steuerstromkreis "+uidName(cc.ls)+")":""}, ${b.nT} Klemmen X1${z.nT?` + ${z.nT} Zuleitungsklemmen X0`:""}${s.nT?` + ${s.nT} Klemmen X2`:""}, ${a.nW+b.nW+s.nW} Adern, ${a.nB} Phasenschienen${a.nS?` · ${a.nS} Geräte mit eigener Zuleitung (keine HLAK)`:""}${w0+w1?` · ${w0+w1} Reihe(n) umgebrochen`:""}${s.notes.length?" · "+s.notes.join(" · "):""}`);
 }
 
 /* ---------- Reihen ---------- */
@@ -1387,7 +1470,13 @@ function renderInsp(){
       ${["LS","FILS"].includes(d.cat)?`<div class="form" style="grid-template-columns:1fr">
         <label>Stromkreis<input id="c_nm" value="${esc(circ?circ.name:"")}" placeholder="z. B. Licht Garage" lang="de"></label>
         <label>Verbraucher<input id="c_ld" value="${esc(circ?circ.load:"")}" placeholder="z. B. LED-Leuchten 120 W"></label>
-        <label>Leitung<input id="c_cb" value="${esc(circ?circ.cable:"")}" placeholder="NYM-J 3x1,5"></label></div>`:""}
+        <label>Leitung<input id="c_cb" value="${esc(circ?circ.cable:"")}" placeholder="NYM-J 3x1,5"></label>
+        <label>Abgang mm² (intern und Leitung)${csSelect(circ?circ.cs:outCsFor(lsAmps(d)),"c_cs")}</label></div>`:""}
+      ${FEED_CATS.includes(d.cat)?(()=>{const fd=f.item.feed||null;return `<div class="feedbox"><div class="note" style="margin-bottom:4px"><b>Zuleitung</b></div>
+        <label class="note">Einspeisung<select id="feedmode"><option value="" ${!fd?"selected":""}>aus dem Verteiler (HLAK / FI / Phasenschiene)</option><option value="term" ${fd&&fd.mode!=="direct"?"selected":""}>eigene Zuleitung über Klemmen X0</option><option value="direct" ${fd&&fd.mode==="direct"?"selected":""}>eigene Zuleitung direkt aufs Gerät</option></select></label>
+        ${fd?`<div class="form" style="grid-template-columns:1fr 1fr"><label>Zuleitung mm²${csSelect(fd.cs||"10","feedcs")}</label><label>Herkunft<input id="feedsrc" value="${esc(fd.src||"")}" placeholder="z. B. Zähler WE 1"></label></div>
+        <div class="note">Leitung ${esc(T.info.has(f.item.uid)?feedCable(T,f.item.uid):"")} · ${fd.mode==="direct"?"Außenleiter und N direkt aufs Gerät, PE auf Klemme X0":"L, N und PE auf Zuleitungsklemmen X0 unten im Schrank"}</div>`:""}
+        <div class="btnrow"><button class="btn sm" data-feedall="1">Für alle ${esc(CAT_LABEL[d.cat]||d.cat)} übernehmen</button></div></div>`})():""}
       <label class="note">Betriebsmittelkennzeichen<input id="bmk" value="${esc(f.item.bmk)}"></label>
       <dl class="kv"><dt>Hersteller</dt><dd>${esc(d.mfr)}</dd><dt>Artikelnr.</dt><dd class="mono">${esc(d.art)}</dd>${eanOf(d)?`<dt>EAN</dt><dd class="mono">${esc(eanOf(d))}</dd>`:""}<dt>Typ</dt><dd>${esc(d.name)}</dd>
       <dt>Breite</dt><dd class="mono">${fmt(d.w)} mm · ${fmt(d.w/TE,2)} TE</dd><dt>EK</dt><dd class="mono">${pr?eur(pr.p)+(pr.ex?'<span class="ex">Bsp.</span>':""):'<span class="miss">kein Preis</span>'}</dd>
@@ -1492,6 +1581,11 @@ function tabCirc(){
       <label>Klemme L<select id="a_tL">${ko(A.tL)}</select></label>
       <label>Klemme N<select id="a_tN">${ko(A.tN)}</select></label>
       <label>Klemme PE<select id="a_tPE">${ko(A.tPE)}</select></label>
+      <label>Ohne HLAK: Zuleitung je Gerät<select id="a_smode"><option value="term" ${A.single.mode!=="direct"?"selected":""}>über Klemmen X0 (unten)</option><option value="direct" ${A.single.mode==="direct"?"selected":""}>direkt aufs Gerät, nur PE auf X0</option></select></label>
+      <label>Zuleitung je Gerät mm²${csSelect(A.single.cs,"a_scs")}</label>
+      <div class="full"><div class="note" style="margin-bottom:4px">Abgangsquerschnitt je Nennstrom (für neue Stromkreise; leer = nach Strombelastbarkeit)</div><div class="chips">${[...new Set([10,13,16,20,25,32,40,...[...T.info.values()].filter(x=>["LS","FILS"].includes(x.d.cat)).map(x=>lsAmps(x.d)).filter(Boolean)])].sort((a,b)=>a-b).map(a=>`<label class="chip mono">${a} A <select data-outcs="${a}"><option value="">${csFor(a)}</option>${CS.map(c=>`<option ${A.outCs[a]===c?"selected":""}>${c}</option>`).join("")}</select></label>`).join("")}</div>
+        <div class="btnrow" style="margin-top:6px"><button class="btn sm" data-outcsall="1">Auf alle Stromkreise anwenden</button></div></div>
+      <label class="full" style="display:block;font-size:13px;color:var(--ink)"><input type="checkbox" id="a_wrap" ${A.wrap!==false?"checked":""} style="width:auto;vertical-align:-2px"> Überbelegte Reihen bei der Auto-Verdrahtung automatisch umbrechen</label>
       <label>Einspeisung mm²<select id="a_feed"><option value="auto" ${(!A.feed||A.feed==="auto")?"selected":""}>automatisch (${feedCs()} mm² nach Vorsicherung)</option>${CS.map(c=>`<option ${c===A.feed?"selected":""}>${c}</option>`).join("")}</select></label>
     </div></div>
     <div class="card"><h3>Phasenbelastung je FI</h3>
@@ -1812,7 +1906,7 @@ function pdfLayout(doc){
 /* --- Stromlaufplan --- */
 const SY0=60, RAIL0=28, RAILD=5;
 function schematic(){
-  const T=topo(); if(!T.E) return {sheets:[],T};
+  const T=topo(); if(!T.E&&!T.singles.length) return {sheets:[],T};
   const isT=u=>T.info.get(u).d.cat==="Klemmen";
   const kids=u=>T.children.get(u)||[];
   const dists=T.order.filter(u=>kids(u).some(c=>!isT(c)));
@@ -1838,12 +1932,24 @@ function schematic(){
     parts.push(cur);
     parts.forEach((p,i)=>sheets.push({kind:"dist",D,cols:p,part:i,parts:parts.length}));
   });
+  if(T.singles.length){
+    const cols=T.singles.map(u=>{const poles=inTerms(T,u).length||1;
+      if(dists.includes(u)) return {t:"sref",u,w:Math.max(28,(poles+1)*5+12)};
+      const c=circ.get(u);const lt=kids(u).filter(k=>isT(k)&&!(c&&(k===c.tN||k===c.tPE))).length;const ex=(c&&c.tN&&T.info.has(c.tN)?1:0)+1;
+      return {t:"sleaf",u,c,w:Math.max(26,(Math.max(poles,lt)+ex)*5+10)}});
+    const parts=[]; let cur=[],cw=0;
+    cols.forEach(col=>{if(cw+col.w>246&&cur.length){parts.push(cur);cur=[];cw=0}cur.push(col);cw+=col.w});
+    parts.push(cur);
+    const ss=parts.map((p,i)=>({kind:"single",cols:p,part:i,parts:parts.length}));
+    const at=T.E?sheets.filter(x=>x.D===T.E).length:0; sheets.splice(at,0,...ss);
+  }
   // übrige Verbindungen
   /* Hauptstromkreis-Verdrahtung: AC-Leiter zwischen Einspeisung, FI, FI/LS, LS und Klemmen im Einspeisebaum
      (auch durchgeschleifte FI→FI-Zuleitungen); diese stehen über die Schienen im Stromlaufplan */
   const PWR=new Set(["Einspeisung","FI","FILS","LS","Klemmen"]);
-  const inT=u=>u===T.E||T.parent.has(u);
+  const inT=u=>u===T.E||T.parent.has(u)||T.singles.includes(u);
   const inTree=w=>{const [a,sa,ta]=w.a.split("|"),[b,sb,tb]=w.b.split("|");if(!T.info.has(a)||!T.info.has(b))return false;
+    if(T.info.get(a).it.role==="feed"||T.info.get(b).it.role==="feed") return true;
     if(termType(w.a)!=="ac"||termType(w.b)!=="ac"||isCoil(ta)||isCoil(tb)) return false;
     const rel=T.parent.get(b)===a||T.parent.get(a)===b;
     const pw=PWR.has(T.info.get(a).d.cat)&&PWR.has(T.info.get(b).d.cat)&&inT(a)&&inT(b)&&!(T.info.get(a).d.cat==="Klemmen"&&sa==="b")&&!(T.info.get(b).d.cat==="Klemmen"&&sb==="b");
@@ -1868,23 +1974,23 @@ function drawSchematic(doc,S,startPage,pageOfDev){
   S.sheets.forEach((sh,si)=>{
     doc.addPage(); const page=startPage+si;
     doc.setDrawColor(0); doc.setFillColor(0); doc.setLineWidth(0.25);
-    if(sh.kind==="dist"){
-      const D=sh.D, xd=T.info.get(D);
-      const title=(D===T.E?"Einspeisung ":xd.d.cat==="FI"?"Fehlerstromschutz ":"Abgänge ")+itemName(xd.it)+(sh.parts>1?` (${sh.part+1}/${sh.parts})`:"");
+    if(sh.kind==="dist"||sh.kind==="single"){
+      const single=sh.kind==="single", D=sh.D, xd=single?null:T.info.get(D);
+      const title=(single?"Einzeleinspeisungen":(D===T.E?"Einspeisung ":xd.d.cat==="FI"?"Fehlerstromschutz ":"Abgänge ")+itemName(xd.it))+(sh.parts>1?` (${sh.part+1}/${sh.parts})`:"");
       sh.title=title;
       txt(title,14,16,{b:true,s:11});
-      const src=D===T.E?`${state.info.netz||""} ${state.info.un||""} ${state.info.fn||""}${state.info.ina?" · InA "+state.info.ina:""} · ${xd.d.short||xd.d.name}`:`eingespeist von ${uidName(T.parent.get(D))} (Blatt ${pageOfDev.par(D)||"?"})`;
+      const src=single?"Jedes Gerät hat eine eigene Zuleitung (z. B. vom Wohnungszähler), keine gemeinsame Sammelschiene. N der Zuleitungen nicht verbinden.":T.singles.includes(D)?`eigene Zuleitung: ${feedSrc(xd.it)} · ${feedCable(T,D)} (Blatt ${pageOfDev.par(D)||"?"})`:D===T.E?`${state.info.netz||""} ${state.info.un||""} ${state.info.fn||""}${state.info.ina?" · InA "+state.info.ina:""} · ${xd.d.short||xd.d.name}`:`eingespeist von ${uidName(T.parent.get(D))} (Blatt ${pageOfDev.par(D)||"?"})`;
       txt(src,14,21,{s:7,c:80});
       // Schienen
-      const outs=outTerms(T,D); const pots=[]; const srcK={};
+      const outs=single?[]:outTerms(T,D); const pots=[]; const srcK={};
       outs.forEach(k=>{const p=T.potOf(k)||k.split("|")[2];if(!pots.includes(p)){pots.push(p);srcK[p]=k}});
       const need=new Set(); sh.cols.forEach(col=>{inTerms(T,col.u).forEach(k=>{const p=T.potOf(k);if(p)need.add(p)});if(col.c){if(col.c.tN)need.add("N");if(col.c.tPE)need.add("PE")}if(col.t==="term"){const p=T.potOf(col.u+"|t|"+art(findItem(col.u).item.art).top[0]);if(p)need.add(p)}});
-      need.forEach(p=>{if(!pots.includes(p))pots.push(p)});
+      if(!single) need.forEach(p=>{if(!pots.includes(p))pots.push(p)});
       const ORD=["L1","L2","L3","N","PE"]; pots.sort((a,b)=>(ORD.indexOf(a)<0?9:ORD.indexOf(a))-(ORD.indexOf(b)<0?9:ORD.indexOf(b)));
       const ry={}; pots.forEach((p,i)=>ry[p]=RAIL0+i*RAILD);
       const xEnd=284;
       pots.forEach(p=>{doc.setLineWidth(p==="PE"?0.25:0.35); if(p==="PE") doc.setLineDashPattern([2,0.8,0.4,0.8],0); line(30,ry[p],xEnd,ry[p]); doc.setLineDashPattern([],0);
-        txt(p,14,ry[p]+1,{b:true,s:7}); if(srcK[p]) txt(label(srcK[p]),20,ry[p]-0.8,{s:4.8,c:90,bg:true}); else if(p==="PE"||p==="N") txt(D===T.E?"":"von "+uidName(T.E),20,ry[p]-0.8,{s:4.8,c:90});
+        txt(p,14,ry[p]+1,{b:true,s:7}); if(srcK[p]) txt(label(srcK[p]),20,ry[p]-0.8,{s:4.8,c:90,bg:true}); else if(p==="PE"||p==="N") txt(D===T.E?"":T.E?"von "+uidName(T.E):"",20,ry[p]-0.8,{s:4.8,c:90});
         if(sh.part>0) txt(`Bl. ${page-1} ->`,30,ry[p]-0.8,{s:4.5,c:90});
         if(sh.part<sh.parts-1) txt(`-> Bl. ${page+1}`,xEnd-12,ry[p]-0.8,{s:4.5,c:90});
       });
@@ -1899,11 +2005,24 @@ function drawSchematic(doc,S,startPage,pageOfDev){
           const k=col.u+"|t|"+d.top[0]; const xx=x0+5; dropTo(xx,k,96); termSym(doc,xx,96,itemName(it.it));
           x+=col.w; return;
         }
-        ins.forEach((k,i)=>dropTo(px(i),k,SY0));
         const P2=Math.max(1,ins.length);
+        if(single){
+          /* Zuleitung je Gerät: Herkunft, Leitung, Klemmen X0 bzw. direkt */
+          const f=ownFeed(it.it)||{}; const fy=27, ty0=37;
+          doc.splitTextToSize(P(feedSrc(it.it)),col.w-3).slice(0,2).forEach((l,i)=>txt(l,x0+2,fy+i*2.4,{s:5.5,b:i===0}));
+          txt(feedCable(T,col.u)+(f.mode==="direct"?" · direkt":""),x0+2,fy+5.4,{s:4.8,c:70});
+          const fts=state.rows.flatMap(r=>r.items).filter(i=>i.feedOf===col.u);
+          ins.forEach((k,i)=>{const xx=px(i);const ft=fts.find(t=>state.wires.some(w=>(w.a.startsWith(t.uid+"|")&&w.b===k)||(w.b.startsWith(t.uid+"|")&&w.a===k)));
+            if(ft){line(xx,34,xx,ty0);termSym(doc,xx,ty0,itemName(ft));line(xx,ty0+6,xx,SY0)} else line(xx,34,xx,SY0);
+            txt(T.potOf(k)||"",xx+0.7,35,{s:4,c:90})});
+          const c=col.c; const lt=c?(T.children.get(col.u)||[]).filter(u=>T.info.get(u).d.cat==="Klemmen"&&u!==c.tN&&u!==c.tPE):[];
+          const peX=px(col.t==="sref"?P2:Math.max(P2,lt.length)+(c&&c.tN&&T.info.has(c.tN)?1:0));
+          const pft=fts.find(t=>art(t.art).look==="term-pe");
+          if(pft){line(peX,34,peX,ty0);termSym(doc,peX,ty0,itemName(pft));txt("PE",peX+0.7,35,{s:4,c:90});ry.PE=ty0+6}
+        } else ins.forEach((k,i)=>dropTo(px(i),k,SY0));
         devSym(doc,d,x0,P2);
         txt(`${itemName(it.it)} ${d.short||""}`.trim(),x0+1.8,SY0+20,{angle:90,s:5.5,b:true});
-        if(col.t==="ref"){
+        if(col.t==="ref"||col.t==="sref"){
           for(let i=0;i<P2;i++){const xx=px(i);line(xx,SY0+20,xx,SY0+29);doc.triangle(xx-1,SY0+29,xx+1,SY0+29,xx,SY0+31,"F")}
           txt(`-> Blatt ${pageOfDev.get(col.u)||"?"}`,x0+5,SY0+36,{s:6,b:true});
           {const cc=state.circuits.find(c=>c.ls===col.u);const lines=doc.splitTextToSize(P(cc?circLabel(cc)+(cc.load?" – "+cc.load:""):d.name),Math.max(14,col.w-7)).slice(0,4);
@@ -1930,7 +2049,7 @@ function drawSchematic(doc,S,startPage,pageOfDev){
         }
         x+=col.w;
       });
-      if(D===T.E) txt("PE-Schutzleiterklemmen sind über die Tragschiene verbunden.",14,172,{s:5.5,c:90});
+      if(D===T.E||single) txt("PE-Schutzleiterklemmen sind über die Tragschienen verbunden; Tragschienen untereinander mit PE verbinden.",14,172,{s:5.5,c:90});
     } else {
       sh.title="Steuer-, Bus- & Netzwerkverbindungen"+(sh.parts>1?` (${sh.part+1}/${sh.parts})`:"");
       txt(sh.title,14,16,{b:true,s:11});
@@ -1999,8 +2118,9 @@ function pdfTables(doc,mode,opts,register){
     const rows=[];
     state.rows.forEach(r=>r.items.forEach(it=>{const d=art(it.art);if(d.cat!=="Klemmen")return;const tk=it.uid+"|t|"+d.top[0],bk=it.uid+"|b|"+d.bot[0];
       const oth=k=>[...state.wires.filter(w=>w.a===k||w.b===k).map(w=>label(w.a===k?w.b:w.a)),...state.buses.filter(b=>b.kind==="jumper"&&busTerms(b).some(t=>t.key===k)).map(()=>"Brücke")].join(", ");
-      const c=state.circuits.find(c=>c.tN===it.uid||c.tPE===it.uid||(T.children.get(c.ls)||[]).includes(it.uid));
-      rows.push([itemName(it),d.look==="term-pe"?"PE":d.look==="term-blue"?"N":(T.potOf(tk)||""),oth(tk)||(d.look==="term-pe"?"Tragschiene":""),oth(bk),c?circLabel(c):"",c?c.cable:"",d.art])}));
+      const c=state.circuits.find(c=>c.tN===it.uid||c.tPE===it.uid||(T.children.get(c.ls)||[]).includes(it.uid)||(it.feedOf&&c.ls===it.feedOf));
+      const fo=it.feedOf&&T.info.has(it.feedOf)?T.info.get(it.feedOf).it:null;
+      rows.push([itemName(it),d.look==="term-pe"?"PE":d.look==="term-blue"?"N":(T.potOf(tk)||""),oth(tk)||(d.look==="term-pe"?"Tragschiene":""),fo?feedSrc(fo):oth(bk),c?circLabel(c)+(fo?" (Zuleitung)":""):"",fo?feedCable(T,it.feedOf):c?c.cable:"",d.art])}));
     at("Klemmenplan",["Klemme","Potential","innen (oben)","außen (unten)","Stromkreis","Leitung","Artikel"],rows);
     const wl=state.wires.map((w,i)=>[i+1,label(w.a),label(w.b),(POT[w.p]||POT.L1).n,w.p==="LAN"?"Patchkabel Cat.6A":matName(w),w.p==="LAN"?csFmt(patchLen(w))+" m":wireLen(w)+" mm"]);
     state.buses.forEach(b=>{const R=busRange(b);wl.push(["-",itemName(R.items[0]),itemName(R.items[R.items.length-1]),b.kind==="jumper"?"N/Brücke":(art(b.art).phases||[]).join("/"),art(b.art).name,b.kind==="jumper"?R.items.length+"-pol":fmt(busLenMm(b)/TE)+" TE"])});
@@ -2019,12 +2139,12 @@ async function buildPdf(mode){
     if(S.sheets.length){
       const start=doc.getNumberOfPages()+1;
       const devPage=new Map(); S.sheets.forEach((sh,i)=>{if(sh.kind==="dist"&&!devPage.has(sh.D))devPage.set(sh.D,start+i)});
-      const parentPage=new Map(); S.sheets.forEach((sh,i)=>{if(sh.kind==="dist")sh.cols.forEach(c=>{if(c.t==="ref")parentPage.set(c.u,start+i)})});
+      const parentPage=new Map(); S.sheets.forEach((sh,i)=>{if(sh.kind==="dist"||sh.kind==="single")sh.cols.forEach(c=>{if(c.t==="ref"||c.t==="sref")parentPage.set(c.u,start+i)})});
       const pm={get:u=>devPage.get(u),par:u=>parentPage.get(u)};
       drawSchematic(doc,S,start,pm);
       S.sheets.forEach((sh,i)=>register(i===0?"Stromlaufplan":"Stromlaufplan",start+i,i>0));
       S.sheets.forEach((sh,i)=>{titles[start+i]="Stromlaufplan · "+(sh.title||"")});
-    } else { doc.addPage(); register("Stromlaufplan",doc.getNumberOfPages()); doc.setFontSize(10); doc.text(P("Kein Stromlaufplan: Es ist keine Einspeisung (Hauptleitungsklemme) mit Verdrahtung vorhanden."),14,30); }
+    } else { doc.addPage(); register("Stromlaufplan",doc.getNumberOfPages()); doc.setFontSize(10); doc.text(P("Kein Stromlaufplan: Es ist keine Einspeisung (Hauptleitungsklemme oder eigene Zuleitung) mit Verdrahtung vorhanden."),14,30); }
   }
   pdfTables(doc,mode,opts,register);
   const n=doc.getNumberOfPages();
@@ -2117,6 +2237,9 @@ $("#insp").addEventListener("click",e=>{
   if(b.dataset.mv){moveTo(ui.sel,f.ri,f.k+(+b.dataset.mv>0?2:-1));return}
   if(b.dataset.mr){const nr=f.ri+(+b.dataset.mr);if(nr>=0&&nr<state.rows.length)moveTo(ui.sel,nr,state.rows[nr].items.length);return}
   if(b.dataset.dup){addToRow(f.item.art,f.ri,f.k+1);return}
+  if(b.dataset.feedall){const cat=art(f.item.art).cat;let n=0;state.rows.forEach(r=>r.items.forEach(it=>{if(it===f.item||art(it.art).cat!==cat)return;if(f.item.feed)it.feed={...f.item.feed,src:(it.feed&&it.feed.src)||""};else delete it.feed;n++}));
+    const c0=state.circuits.find(c=>c.ls===f.item.uid);if(c0&&["LS","FILS"].includes(cat))state.circuits.forEach(c=>{const g=c.ls&&findItem(c.ls);if(!g||g.item===f.item||art(g.item.art).cat!==cat||lsAmps(art(g.item.art))!==lsAmps(art(f.item.art)))return;const old=c.cs;c.cs=c0.cs;applyCircuitCs(c,old)});
+    invalidate();render();toast(`Zuleitung${c0?" und Abgangsquerschnitt":""} auf ${n} weitere Geräte übertragen – Auto-Verdrahtung ausführen`);return}
   if(b.dataset.deldev) delDevice(ui.sel);
 });
 $("#insp").addEventListener("change",e=>{
@@ -2124,6 +2247,12 @@ $("#insp").addEventListener("change",e=>{
 
   if(id==="wcs"){const w=state.wires.find(x=>x.id===ui.selWire);if(w){w.cs=e.target.value;render()}}
   if(["c_nm","c_ld","c_cb"].includes(id)&&ui.sel){const c=circuitFor(ui.sel,true);c[{c_nm:"name",c_ld:"load",c_cb:"cable"}[id]]=e.target.value.trim();if(id==="c_cb"){c.cableManual=!!c.cable&&c.cable!==circuitCable(c);if(!c.cable)c.cable=circuitCable(c)}render();return}
+  if(id==="c_cs"&&ui.sel){const c=circuitFor(ui.sel,true);const old=c.cs;c.cs=e.target.value;applyCircuitCs(c,old);render();return}
+  if(["feedmode","feedcs","feedsrc"].includes(id)&&ui.sel){const f=findItem(ui.sel);if(!f)return;const it=f.item;
+    if(id==="feedmode"){if(!e.target.value){delete it.feed;dropFeedTerms()}else it.feed=Object.assign({cs:state.auto.single.cs,src:""},it.feed||{},{mode:e.target.value})}
+    if(id==="feedcs"&&it.feed)it.feed.cs=e.target.value;
+    if(id==="feedsrc"&&it.feed)it.feed.src=e.target.value.trim();
+    invalidate();render();if(id==="feedmode")toast("Zuleitung geändert – Auto-Verdrahtung ausführen, um Klemmen und Adern anzupassen");return}
   if(id==="bmk"||id==="ordno"){const f=findItem(ui.sel);if(f){f.item[id==="bmk"?"bmk":"order"]=e.target.value.trim();render()}}
   const bus=state.buses.find(x=>x.id===ui.selBus);
   if(bus&&id==="bstart"){bus.s=e.target.value;render()}
@@ -2172,7 +2301,8 @@ $("#tabBody").addEventListener("click",async e=>{
   if(b.dataset.copy){copyText(b.dataset.copy==="bom"?bomCsv():wiresCsv());return}
   if(b.dataset.csv){saveFile(`${safeName(state.name)} - ${b.dataset.csv==="bom"?"Stueckliste":"Verdrahtungsliste"}.csv`,b.dataset.csv==="bom"?bomCsv():wiresCsv());return}
   if(b.dataset.auto){const m=b.dataset.auto;if(m==="all"){autoAll();return}
-    const r=m==="layout"?(ensureControlCircuit(),autoFromLayout()):(()=>{const x=autoTerminals(resetTerminalWiring());const y=supplyLoads();return x?{nT:x.nT,nW:x.nW+y.nW}:null})(); render(); if(r) toast(m==="layout"?`${r.nC} Stromkreise, ${r.nW} Adern, ${r.nB} Phasenschienen ergänzt`:`${r.nT} Klemmen und ${r.nW} Adern ergänzt`); return}
+    const r=m==="layout"?(ensureControlCircuit(),autoFromLayout()):(()=>{autoSingleFeeds();const x=autoTerminals(resetTerminalWiring());const y=supplyLoads();const z=autoSingleFeeds();if(state.auto.wrap!==false)wrapRows();renumberStrips();return x?{nT:x.nT+z.nT,nW:x.nW+y.nW+z.nW}:null})(); render(); if(r) toast(m==="layout"?`${r.nC} Stromkreise, ${r.nW} Adern, ${r.nB} Phasenschienen ergänzt`:`${r.nT} Klemmen und ${r.nW} Adern ergänzt`); return}
+  if(b.dataset.outcsall){let n=0;state.circuits.forEach(c=>{if(c.internal||!c.ls||!findItem(c.ls))return;const cs=outCsFor(lsAmps(art(findItem(c.ls).item.art)));if(cs!==c.cs){const old=c.cs;c.cs=cs;applyCircuitCs(c,old);n++}});render();toast(`${n} Stromkreise angepasst`);return}
   if(b.id==="cAdd"){state.circuits.push({id:uid(),name:`Stromkreis ${state.circuits.length+1}`,load:"",ls:null,cs:"1,5",withN:true,cable:"NYM-J 3x1,5",tN:null,tPE:null});render();return}
   if(b.dataset.cdel){state.circuits=state.circuits.filter(c=>c.id!==b.dataset.cdel);render();return}
   if(b.dataset.cab){applyCab(b.dataset.cab);return}
@@ -2196,6 +2326,8 @@ $("#tabBody").addEventListener("change",e=>{
   if(t.dataset.cf){const c=state.circuits.find(x=>x.id===t.dataset.ci);if(!c)return;const f=t.dataset.cf;const prevCs=c.cs,prevCable=circuitCable(c);c[f]=t.type==="checkbox"?t.checked:(t.value||(["ls","tN","tPE"].includes(f)?null:""));if(f==="ls"&&c.ls){const d=art(findItem(c.ls).item.art);c.cs=csFor(lsAmps(d));c.cable=circuitCable(c)}if(f==="cable"){c.cableManual=!!c.cable&&c.cable!==circuitCable(c);if(!c.cable)c.cable=circuitCable(c)}if(f==="cs"){const n=applyCircuitCs(c,prevCs);toast(n?`Stromkreis ${circLabel(c)}: Adern und zu kleine Klemmen auf ${c.cs} mm² angepasst`:`Querschnitt gespeichert – wirkt bei der nächsten Auto-Verdrahtung`)}render();return}
   const A=state.auto;
   if(t.id==="a_bus"){A.bus=t.checked;save();return} if(t.id==="a_fifeed"){A.fiFeed=t.value;save();return} if(t.id==="a_x2"){A.x2=t.checked;save();return} if(t.id==="a_cp"){A.circPrefix=t.checked;save();render();return} if(t.id==="a_layout"){A.layout=t.value;save();return} if(t.id==="a_n"){A.nMode=t.value;save();return}
+  if(t.id==="a_smode"){A.single.mode=t.value;save();return} if(t.id==="a_scs"){A.single.cs=t.value;save();return} if(t.id==="a_wrap"){A.wrap=t.checked;save();return}
+  if(t.dataset.outcs){if(t.value)A.outCs[t.dataset.outcs]=t.value;else delete A.outCs[t.dataset.outcs];save();return}
   if(t.id==="a_tL"){A.tL=t.value;save();return} if(t.id==="a_tN"){A.tN=t.value;save();return} if(t.id==="a_tPE"){A.tPE=t.value;save();return} if(t.id==="a_feed"){A.feed=t.value;save();return}
   if(t.id==="cab_res"){state.cab.res=Math.max(0,+t.value||0);render();return} if(t.id==="cab_extra"){state.cab.extra=Math.max(0,+t.value||0);render();return}
   if(t.id==="cab_mount"){state.cab.mount=t.value;render();return} if(t.id==="cab_ip"){state.cab.ip=+t.value;render();return}
