@@ -2210,8 +2210,11 @@ $("#editor").addEventListener("click",e=>{
 });
 $("#editor").addEventListener("change",e=>{if(e.target.id==="ed_ean")edEanLookup()});
 
+function board_closeMenus(keep){document.querySelectorAll("#board .rtools[open]").forEach(d=>{if(d!==keep)d.open=false})}
 $("#board").addEventListener("click",e=>{
   const tr=e.target.closest(".trash"); if(tr){e.stopPropagation();const f=findItem(tr.dataset.del);const n=f?itemName(f.item)||art(f.item.art).art:"";delDevice(tr.dataset.del);toast(`${n} entfernt`);return}
+  /* Menü „⋯“ der Reihe: nur auf- und zuklappen, nicht neu zeichnen (sonst schließt es sofort wieder) */
+  if(e.target.closest(".rtools summary")){const me=e.target.closest(".rtools");board_closeMenus(me);return}
   const sl=e.target.closest("[data-slot]"); if(sl){openPicker(+sl.dataset.slot);return}
   const ro=e.target.closest("[data-rowop]");
   if(ro){const ri=+ro.dataset.ri, op=ro.dataset.rowop;
