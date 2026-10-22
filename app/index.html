@@ -161,6 +161,16 @@ details.ed summary{cursor:pointer;font-size:13px;font-weight:500;color:var(--acc
 .fill.over i{background:var(--bad)}
 .rowhead input{width:54px;background:var(--panel);border:1px solid var(--line);border-radius:3px;padding:1px 4px;font-family:var(--f-mono);font-size:12px}
 .railbox{position:relative;padding-block:16px}
+.fields{display:grid;column-gap:var(--fgap,48px);row-gap:18px;align-items:start;position:relative;border:2px solid var(--line);border-radius:8px;padding:30px 16px 16px;background:color-mix(in srgb,var(--panel) 55%,transparent)}
+.fields .cabtag{position:absolute;top:7px;right:14px;font-size:12px;color:var(--muted);font-family:var(--f-label)}
+.fieldhead{font-family:var(--f-label);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border-bottom:1px dashed var(--line);padding-bottom:2px}
+.row.field.extra{outline:2px dashed var(--bad);outline-offset:2px}
+.rowhead.compact{flex-wrap:nowrap;white-space:nowrap;gap:6px}
+.rowhead.compact .fill{width:60px}
+.rtools{position:relative;margin-left:auto}
+.rtools summary{list-style:none;cursor:pointer;border:1px solid var(--line);border-radius:3px;padding:0 7px;background:var(--panel);color:var(--ink)}
+.rtools summary::-webkit-details-marker{display:none}
+.rtools .pop{position:absolute;right:0;top:calc(100% + 4px);z-index:30;background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:6px;box-shadow:0 6px 18px rgba(0,0,0,.15);width:max-content;max-width:260px}
 .rail{position:relative;height:var(--devh);display:flex;align-items:stretch;background:linear-gradient(to bottom,transparent calc(50% - 9px),var(--rail) calc(50% - 9px),var(--rail) calc(50% + 9px),transparent calc(50% + 9px));background-repeat:no-repeat}
 .cap{position:absolute;top:-6px;bottom:-6px;border-left:2px dashed var(--bad)}
 .cap::after{content:"Ende Reihe";position:absolute;top:-14px;left:4px;font-size:10px;color:var(--bad);white-space:nowrap}
@@ -494,11 +504,15 @@ function nextBmk(d,strip){
 function mkItem(a){const d=art(a);return {uid:uid(),art:a,bmk:nextBmk(d),order:""}}
 const usedMm = r => r.items.reduce((s,i)=>s+art(i.art).w,0);
 function findItem(u){for(let ri=0;ri<state.rows.length;ri++){const k=state.rows[ri].items.findIndex(i=>i.uid===u);if(k>=0)return {ri,k,item:state.rows[ri].items[k]}}return null}
+/* Mehrfeldrige Schränke: Reihen werden zeilenweise auf die Felder verteilt (Reihe 1 = Feld 1 oben, Reihe 2 = Feld 2 oben, …) */
+const FIELD_GAP=60; /* mm Verdrahtungskanal zwischen den Feldern */
+function cabFields(){const d=state.cab&&state.cab.art?art(state.cab.art):null;if(!d||!d.cab||!(d.cab.fields>1))return 1;const fw=d.cab.per/d.cab.fields;return state.rows.length&&state.rows.every(r=>r.te===fw)?d.cab.fields:1}
+function rowPos(ri){const F=cabFields();const fw=F>1?state.rows[0].te*TE:0;return {f:ri%F,g:Math.floor(ri/F),x:(ri%F)*(fw+FIELD_GAP),y:Math.floor(ri/F)*state.pitch,F}}
 function termMm(key){
   const [u,side,t]=key.split("|"); const f=findItem(u); if(!f) return null;
   const row=state.rows[f.ri]; let off=0; for(let j=0;j<f.k;j++) off+=art(row.items[j].art).w;
-  const d=art(f.item.art); const list=side==="t"?d.top:d.bot; const ix=Math.max(0,list.indexOf(t));
-  return {x:off+d.w*(ix+.5)/Math.max(1,list.length), y:f.ri*state.pitch+(side==="t"?-40:40)};
+  const d=art(f.item.art); const list=side==="t"?d.top:d.bot; const ix=Math.max(0,list.indexOf(t)); const P=rowPos(f.ri);
+  return {x:P.x+off+d.w*(ix+.5)/Math.max(1,list.length), y:P.y+(side==="t"?-40:40)};
 }
 function wireLen(w){const a=termMm(w.a),b=termMm(w.b);if(!a||!b)return 0;return Math.ceil((Math.abs(a.x-b.x)+Math.abs(a.y-b.y)+100)/10)*10}
 const itemName = it => it.bmk || art(it.art).art;
@@ -748,7 +762,7 @@ function cabCandidates(){
 function applyCab(a){
   const d=art(a), c=d.cab; const rows=[]; const fw=cabFieldTE(c), slots=cabSlots(c);
   state.rows.forEach(r=>{if(!r.items.length)return;flowRow(r,fw).forEach(fr=>rows.push({id:uid(),te:fw,items:fr.items,auto:r.auto,feedRow:r.feedRow}))});
-  while(rows.length<slots) rows.push({id:uid(),te:fw,items:[]});
+  {const fi=rows.findIndex(r=>r.feedRow);const at=fi<0?rows.length:fi;const pad=[];while(rows.length+pad.length<slots)pad.push({id:uid(),te:fw,items:[]});rows.splice(at,0,...pad)}
   state.rows=rows; state.cab.art=a; if(!state.info.ip) state.info.ip="IP"+c.ip; ui.active=0; invalidate(); render(); toast(`${d.mfr} ${d.art} übernommen – ${c.fields>1?`${c.fields} Felder × ${c.rows} Reihen à ${fw} TE (${slots} Reihen im Plan)`:`${c.rows} Reihen à ${c.per} TE`}`);
 }
 
@@ -1270,12 +1284,25 @@ function renderBoard(){
   const used=new Set(); state.wires.forEach(w=>{used.add(w.a);used.add(w.b)});
   const {m:bm}=busMap();
   const cmap=new Map(state.circuits.filter(c=>c.ls&&c.name&&!/^Stromkreis \d+$/.test(c.name)).map(c=>[c.ls,c.name]));
-  let h="";
+  let h=""; const F=cabFields(), cabD=F>1?art(state.cab.art):null, slots=F>1?cabD.cab.rows*F:0;
   state.rows.forEach((r,ri)=>{
     const um=usedMm(r), cap=r.te*TE, over=um>cap+.01, pct=Math.min(100,um/cap*100);
+    const P=rowPos(ri), extra=F>1&&ri>=slots;
     const railW=Math.max(cap,um)*s;
     const lefts=[]; let acc=0; r.items.forEach(it=>{lefts.push(acc);acc+=art(it.art).w});
     const delArmed=ui.arm==="row:"+r.id;
+    const tools=`<button data-rowop="above" data-ri="${ri}" title="Leere Reihe darüber einfügen">+ darüber</button>
+          <button data-rowop="below" data-ri="${ri}" title="Leere Reihe darunter einfügen">+ darunter</button>
+          <button data-rowop="dup" data-ri="${ri}" title="Reihe mit Geräten, Schienen und Adern kopieren">Duplizieren</button>
+          <button data-rowop="up" data-ri="${ri}" ${ri===0?"disabled":""} aria-label="Reihe nach oben">▲</button>
+          <button data-rowop="down" data-ri="${ri}" ${ri===state.rows.length-1?"disabled":""} aria-label="Reihe nach unten">▼</button>
+          <button class="danger" data-rowop="del" data-ri="${ri}">${ui.arm==="row:"+r.id?"Wirklich löschen?":"Löschen"}</button>`;
+    if(F>1){h+=`<div class="row field ${ri===ui.active?"active":""} ${extra?"extra":""}" data-r="${ri}" style="grid-column:${P.f+1};grid-row:${P.g+2}">
+      <div class="rowhead compact"><b>Reihe ${ri+1}</b><span class="note">${extra?"außerhalb des Schranks":`Feld ${P.f+1} · ${P.g+1}`}</span>
+        <span class="mono">${fmt(um/TE)}/${r.te}</span><span class="fill ${over?"over":""}"><i style="width:${pct}%"></i></span>
+        <details class="rtools"><summary title="Reihe bearbeiten" aria-label="Reihe ${ri+1} bearbeiten">⋯</summary><div class="rowtools pop">${tools}</div></details></div>
+      <div class="railbox"><div class="rail" style="width:${Math.max(cap,um)*s}px;--devh:${devh}px">`}
+    else {
     h+=`<div class="row ${ri===ui.active?"active":""}" data-r="${ri}">
       <div class="rowhead">
         <b>Reihe ${ri+1}</b>
@@ -1293,6 +1320,7 @@ function renderBoard(){
         </span>
       </div>
       <div class="railbox"><div class="rail" style="width:${railW}px;--devh:${devh}px">`;
+    }
 
     r.items.forEach(it=>{
       const d=art(it.art), w=d.w*s, narrow=d.w<12;
@@ -1325,6 +1353,10 @@ function renderBoard(){
     h+=`${over?`<div class="cap" style="left:${cap*s}px"></div>`:""}</div>
         <div class="te-ticks" style="width:${cap*s}px;--tepx:${tepx}px"></div></div></div>`;
   });
+  if(F>1){
+    const heads=Array.from({length:F},(_,f)=>`<div class="fieldhead" style="grid-column:${f+1};grid-row:1">Feld ${f+1}</div>`).join("");
+    h=`<div class="fields" style="grid-template-columns:repeat(${F},max-content)"><div class="cabtag">${esc(cabD.mfr+" "+cabD.art)} · ${F} Felder × ${cabD.cab.rows} Reihen à ${state.rows[0].te} TE</div>${heads}${h}</div>`;
+  }
   h+=`<button class="btn sm addrow" data-rowop="end" data-ri="-1">+ Reihe anfügen</button><svg id="wires" aria-hidden="true"></svg>`;
   $("#board").innerHTML=h;
   requestAnimationFrame(drawWires);
@@ -1349,6 +1381,9 @@ function drawWires(){
   const rowsEl=[...board.querySelectorAll(".row")];
   rowsEl.forEach(r=>{const rb=r.querySelector(".railbox");rb.style.paddingTop="";rb.style.paddingBottom=""});
   board.style.paddingLeft=""; board.style.paddingRight="";
+  const grid=board.querySelector(".fields"); if(grid) grid.style.removeProperty("--fgap");
+  const F=grid?cabFields():1, gOf=ri=>Math.floor(ri/F), nG=Math.ceil(rowsEl.length/F);
+  const rowsOfG=g=>rowsEl.filter((_,i)=>gOf(i)===g);
   svg.classList.remove("focus","hover");
   if(ui.wireStyle==="off"){svg.innerHTML="";return}
   const vis=state.wires.filter(wireVisible);
@@ -1373,10 +1408,10 @@ function drawWires(){
   }
   if(ui.wireStyle==="labels"){
     const per=new Map(); vis.forEach(w=>{[[w.a,w.b],[w.b,w.a]].forEach(([k,o])=>{if(!per.has(k))per.set(k,[]);per.get(k).push({w,o})})});
-    const need=rowsEl.map(()=>({t:0,b:0}));
+    const need=Array.from({length:nG},()=>({t:0,b:0}));
     let {m}=measure();
-    per.forEach((list,k)=>{const p=m.get(k);if(!p)return;const len=list.map(x=>"→ "+label(x.o)).join(", ").length*5.6+12;const n=need[p.ri];if(p.side==="t")n.t=Math.max(n.t,len);else n.b=Math.max(n.b,len)});
-    rowsEl.forEach((r,i)=>{const rb=r.querySelector(".railbox");rb.style.paddingTop=Math.max(16,need[i].t)+"px";rb.style.paddingBottom=Math.max(16,need[i].b)+"px"});
+    per.forEach((list,k)=>{const p=m.get(k);if(!p)return;const len=list.map(x=>"→ "+label(x.o)).join(", ").length*5.6+12;const n=need[gOf(p.ri)];if(p.side==="t")n.t=Math.max(n.t,len);else n.b=Math.max(n.b,len)});
+    rowsEl.forEach((r,i)=>{const rb=r.querySelector(".railbox");const n=need[gOf(i)];rb.style.paddingTop=Math.max(16,n.t)+"px";rb.style.paddingBottom=Math.max(16,n.b)+"px"});
     ({m}=measure()); let h="";
     per.forEach((list,k)=>{const p=m.get(k);if(!p)return;const txt=list.map(x=>"→ "+label(x.o)).join(", ");const top=p.side==="t";
       const on=foc&&list.some(x=>foc.has(x.w.id))?" on":"";
@@ -1384,32 +1419,37 @@ function drawWires(){
       h+=`<text class="lb" x="${p.x+3}" y="${p.y+(top?-11:11)}" transform="rotate(-90 ${p.x+3} ${p.y+(top?-11:11)})" text-anchor="${top?"start":"end"}">${esc(txt)}</text>`});
     fin(h); return;
   }
-  /* Kanäle: Kanal k liegt über Reihe k, Kanal n unter der letzten Reihe; seitliche Kanäle links/rechts */
-  let {m,rails}=measure(); const n=rowsEl.length;
-  const railL=Math.min(...rails.map(r=>r.left)), railR=Math.max(...rails.map(r=>r.right));
-  const routes=[]; const chan=Array.from({length:n+1},()=>[]); const duct={L:[],R:[]};
+  /* Kanäle: Kanal k liegt über Reihe (bzw. Rasterzeile) k, Kanal n unter der letzten; senkrechte Kanäle links, rechts und zwischen den Feldern */
+  let {m,rails}=measure(); const n=nG;
+  const fieldX=rs=>{const L=Array.from({length:F},()=>1e9),R=Array.from({length:F},()=>-1e9);rs.forEach((r,i)=>{const f=i%F;L[f]=Math.min(L[f],r.left);R[f]=Math.max(R[f],r.right)});return {L,R}};
+  let fx=fieldX(rails);
+  const ductX=()=>[fx.L[0],...Array.from({length:F-1},(_,i)=>(fx.R[i]+fx.L[i+1])/2),fx.R[F-1]];
+  let DX=ductX();
+  const routes=[]; const chan=Array.from({length:n+1},()=>[]); const duct=Array.from({length:F+1},()=>[]);
   vis.forEach(w=>{const a=m.get(w.a),b=m.get(w.b);if(!a||!b)return;
-    const ca=a.side==="t"?a.ri:a.ri+1, cb=b.side==="t"?b.ri:b.ri+1;
+    const ca=a.side==="t"?gOf(a.ri):gOf(a.ri)+1, cb=b.side==="t"?gOf(b.ri):gOf(b.ri)+1;
     const r={w,ca,cb};
     if(ca===cb){r.sa={x1:Math.min(a.x,b.x),x2:Math.max(a.x,b.x)};chan[ca].push(r.sa)}
-    else{const costL=(a.x-railL)+(b.x-railL), costR=(railR-a.x)+(railR-b.x);r.side=costL<=costR?"L":"R";const dx=r.side==="L"?railL:railR;
+    else{let best=0,bc=1e12;DX.forEach((x,i)=>{const c=Math.abs(a.x-x)+Math.abs(b.x-x);if(c<bc){bc=c;best=i}});r.di=best;const dx=DX[best];
       r.sa={x1:Math.min(a.x,dx),x2:Math.max(a.x,dx)};r.sb={x1:Math.min(b.x,dx),x2:Math.max(b.x,dx)};chan[ca].push(r.sa);chan[cb].push(r.sb);
-      r.d={lo:Math.min(ca,cb),hi:Math.max(ca,cb)};duct[r.side].push(r.d)}
+      r.d={lo:Math.min(ca,cb),hi:Math.max(ca,cb)};duct[best].push(r.d)}
     routes.push(r)});
   const color=(list,lo,hi,gap)=>{list.sort((p,q)=>p[lo]-q[lo]);const ends=[];list.forEach(it=>{let l=ends.findIndex(e=>e<it[lo]-gap);if(l<0){l=ends.length;ends.push(0)}ends[l]=it[hi];it.lane=l});return ends.length};
   const chanN=chan.map(c=>color(c,"x1","x2",6));
-  const ductN={L:color(duct.L,"lo","hi",0.5),R:color(duct.R,"lo","hi",0.5)};
-  rowsEl.forEach((r,i)=>{r.querySelector(".railbox").style.paddingTop=(16+(chanN[i]?chanN[i]*LANE+8:0))+"px"});
-  if(n){rowsEl[n-1].querySelector(".railbox").style.paddingBottom=(16+(chanN[n]?chanN[n]*LANE+8:0))+"px"}
-  board.style.paddingLeft=(28+ductN.L*LANE)+"px"; board.style.paddingRight=(28+ductN.R*LANE)+"px";
-  ({m,rails}=measure());
-  const L2=Math.min(...rails.map(r=>r.left)), R2=Math.max(...rails.map(r=>r.right));
-  const yOf=(k,lane)=>k<n?rails[k].top-6-lane*LANE:rails[n-1].bottom+6+lane*LANE;
+  const ductN=duct.map(d=>color(d,"lo","hi",0.5));
+  rowsEl.forEach((r,i)=>{const g=gOf(i);r.querySelector(".railbox").style.paddingTop=(16+(chanN[g]?chanN[g]*LANE+8:0))+"px"});
+  if(n) rowsOfG(n-1).forEach(r=>{r.querySelector(".railbox").style.paddingBottom=(16+(chanN[n]?chanN[n]*LANE+8:0))+"px"});
+  board.style.paddingLeft=(28+ductN[0]*LANE)+"px"; board.style.paddingRight=(28+ductN[F]*LANE)+"px";
+  if(grid&&F>1){const inner=Math.max(0,...ductN.slice(1,F));grid.style.setProperty("--fgap",Math.max(48,inner*LANE+28)+"px")}
+  ({m,rails}=measure()); fx=fieldX(rails); DX=ductX();
+  const gTop=g=>Math.min(...rails.filter((_,i)=>gOf(i)===g).map(r=>r.top)), gBot=g=>Math.max(...rails.filter((_,i)=>gOf(i)===g).map(r=>r.bottom));
+  const yOf=(k,lane)=>k<n?gTop(k)-6-lane*LANE:gBot(n-1)+6+lane*LANE;
+  const dxOf=(i,lane,N)=>i===0?DX[0]-8-lane*LANE:i===F?DX[F]+8+lane*LANE:DX[i]+(lane-(N-1)/2)*LANE;
   let h="";
   routes.forEach(r=>{const a=m.get(r.w.a),b=m.get(r.w.b);if(!a||!b)return;
     const ya=yOf(r.ca,r.sa.lane);
-    if(r.ca===r.cb){h+=emit(r.w,`M${a.x},${a.y} L${a.x},${ya} L${b.x},${ya} L${b.x},${b.y}`);return}
-    const yb=yOf(r.cb,r.sb.lane); const dx=r.side==="L"?L2-8-r.d.lane*LANE:R2+8+r.d.lane*LANE;
+    if(r.di==null){h+=emit(r.w,`M${a.x},${a.y} L${a.x},${ya} L${b.x},${ya} L${b.x},${b.y}`);return}
+    const yb=yOf(r.cb,r.sb.lane); const dx=dxOf(r.di,r.d.lane,ductN[r.di]);
     h+=emit(r.w,`M${a.x},${a.y} L${a.x},${ya} L${dx},${ya} L${dx},${yb} L${b.x},${yb} L${b.x},${b.y}`)});
   fin(h);
 }
@@ -1867,21 +1907,29 @@ function devFill(doc,d){
   doc.setFillColor(...c);
 }
 function pdfLayout(doc){
-  const rows=state.rows, pitch=state.pitch;
-  const maxW=Math.max(100,...rows.map(r=>Math.max(r.te*TE,usedMm(r))));
-  const H=rows.length*pitch;
+  const rows=state.rows, pitch=state.pitch, F=cabFields();
+  const fieldW=F>1?rows[0].te*TE:0;
+  const maxW=F>1?F*fieldW+(F-1)*FIELD_GAP:Math.max(100,...rows.map(r=>Math.max(r.te*TE,usedMm(r))));
+  const H=(F>1?Math.ceil(rows.length/F):rows.length)*pitch;
   const sc=[1,1.5,2,2.5,3,4,5,6,8,10,15,20].find(s=>maxW/s<=228&&H/s<=138)||20;
   const x0=44, y0=26;
   doc.setTextColor(0); doc.setFont("helvetica","bold"); doc.setFontSize(12); doc.text("Aufbauplan",14,17);
   doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.text(P(`Maßstab 1:${String(sc).replace(".",",")} · Ansicht von vorn ohne Abdeckung · 1 TE = 18 mm · Reihenabstand ${pitch} mm`),48,17);
   const cab=state.cab.art?art(state.cab.art):null;
-  if(cab){doc.setDrawColor(120);doc.setLineWidth(0.4);doc.roundedRect(x0-8,y0-4,maxW/sc+16,H/sc+8,1.5,1.5);doc.setFontSize(7);doc.setTextColor(90);doc.text(P(`${cab.mfr} ${cab.art} · ${cab.cab.rows} x ${cab.cab.per} TE · IP${cab.cab.ip}${cab.cab.dims?" · "+cab.cab.dims+" mm":""}`),x0-7,y0-5.5);doc.setTextColor(0)}
+  if(cab){doc.setDrawColor(120);doc.setLineWidth(0.4);doc.roundedRect(x0-8,y0-4,maxW/sc+16,H/sc+8,1.5,1.5);doc.setFontSize(7);doc.setTextColor(90);doc.text(P(`${cab.mfr} ${cab.art} · ${F>1?F+" Felder × "+cab.cab.rows+" Reihen à "+fieldW/TE+" TE":cab.cab.rows+" x "+cab.cab.per+" TE"} · IP${cab.cab.ip}${cab.cab.dims?" · "+cab.cab.dims+" mm":""}`),x0-7,y0-5.5);doc.setTextColor(0)}
+  if(F>1){ /* Felder: Rahmen und Kanal dazwischen */
+    for(let f=0;f<F;f++){const fx=x0+f*(fieldW+FIELD_GAP)/sc;doc.setDrawColor(170);doc.setLineWidth(0.2);doc.setLineDashPattern([1.2,0.8],0);doc.rect(fx-1.5,y0-2,fieldW/sc+3,H/sc+4);doc.setLineDashPattern([],0);
+      doc.setFontSize(6.5);doc.setTextColor(90);doc.text(P(`Feld ${f+1}`),fx+fieldW/sc/2,y0-2.8,{align:"center"});doc.setTextColor(0)}
+  }
   rows.forEach((r,ri)=>{
-    const yc=y0+(ri+.5)*pitch/sc, rh=35/sc;
-    doc.setFillColor(205,208,210); doc.setDrawColor(150); doc.setLineWidth(0.15); doc.rect(x0,yc-rh/2,r.te*TE/sc,rh,"FD");
+    const RP=rowPos(ri); const yc=y0+(RP.g+.5)*pitch/sc, rh=35/sc, xr=x0+RP.x/sc;
+    doc.setFillColor(205,208,210); doc.setDrawColor(150); doc.setLineWidth(0.15); doc.rect(xr,yc-rh/2,r.te*TE/sc,rh,"FD");
+    if(F>1){ doc.setFont("helvetica","bold"); doc.setFontSize(5); doc.setTextColor(90); doc.text(P(`R${ri+1}`),xr-0.6,yc-rh/2-0.6,{align:"right"}); doc.setTextColor(0);
+      if(RP.f===0){doc.setFontSize(8);doc.text(P(`Reihe ${RP.g+1}`),14,yc-1);doc.setFont("helvetica","normal");doc.setFontSize(6.5);doc.setTextColor(90);doc.text(P(`Planreihen ${RP.g*F+1}–${Math.min(rows.length,RP.g*F+F)}`),14,yc+2.5);doc.setTextColor(0)} }
+    else {
     doc.setFont("helvetica","bold"); doc.setFontSize(8); doc.setTextColor(0); doc.text(P(`Reihe ${ri+1}`),14,yc-1);
-    doc.setFont("helvetica","normal"); doc.setFontSize(6.5); doc.setTextColor(90); doc.text(P(`${fmt(usedMm(r)/TE)} / ${r.te} TE`),14,yc+2.5); doc.setTextColor(0);
-    let x=x0; const lefts=[];
+    doc.setFont("helvetica","normal"); doc.setFontSize(6.5); doc.setTextColor(90); doc.text(P(`${fmt(usedMm(r)/TE)} / ${r.te} TE`),14,yc+2.5); doc.setTextColor(0); }
+    let x=xr; const lefts=[];
     r.items.forEach(it=>{
       const d=art(it.art), w=d.w/sc, h=(d.cat==="Klemmen"?65:d.cat==="Sonstiges"?45:88)/sc;
       lefts.push(x); devFill(doc,d); doc.setDrawColor(60); doc.setLineWidth(0.2); doc.rect(x,yc-h/2,w,h,"FD");
@@ -1894,12 +1942,12 @@ function pdfLayout(doc){
     state.buses.forEach(b=>{const R=busRange(b);if(!R||R.ri!==ri)return;const bl=lefts[R.a],bw=busLenMm(b)/sc;
       if(b.kind==="jumper"){doc.setDrawColor(224,122,31);doc.setLineWidth(Math.max(0.4,3/sc));doc.line(bl+art(R.items[0].art).w/sc/2,yc,bl+bw-art(R.items[R.items.length-1].art).w/sc/2,yc);doc.setDrawColor(0);return}
       const h=88/sc, by=b.side==="t"?yc-h/2-1.6:yc+h/2+0.2; doc.setFillColor(198,128,66); doc.rect(bl,by,bw,1.4,"F"); doc.setFontSize(4.5); doc.setTextColor(90,50,20); doc.text(P(art(b.art).short+" "+fmt(busLenMm(b)/TE)+" TE"),bl+0.5,b.side==="t"?by-0.4:by+3); doc.setTextColor(0)});
-    if(usedMm(r)>r.te*TE+.01){doc.setDrawColor(200,0,0);doc.setLineDashPattern([1,1],0);doc.line(x0+r.te*TE/sc,yc-pitch/sc/2+2,x0+r.te*TE/sc,yc+pitch/sc/2-2);doc.setLineDashPattern([],0);doc.setDrawColor(0)}
+    if(usedMm(r)>r.te*TE+.01){doc.setDrawColor(200,0,0);doc.setLineDashPattern([1,1],0);doc.line(xr+r.te*TE/sc,yc-pitch/sc/2+2,xr+r.te*TE/sc,yc+pitch/sc/2-2);doc.setLineDashPattern([],0);doc.setDrawColor(0)}
   });
   // Maßkette & Maßstabsbalken
-  const wmax=Math.max(...rows.map(r=>r.te*TE)); const yd=y0+H/sc+7;
+  const wmax=F>1?maxW:Math.max(...rows.map(r=>r.te*TE)); const yd=y0+H/sc+7;
   doc.setDrawColor(0); doc.setLineWidth(0.15); doc.line(x0,yd,x0+wmax/sc,yd); doc.line(x0,yd-1.5,x0,yd+1.5); doc.line(x0+wmax/sc,yd-1.5,x0+wmax/sc,yd+1.5);
-  doc.setFontSize(7); doc.text(P(`${fmt(wmax,1)} mm (${fmt(wmax/TE,0)} TE)`),x0+wmax/sc/2,yd-1,{align:"center"});
+  doc.setFontSize(7); doc.text(P(F>1?`${F} Felder à ${fmt(fieldW,1)} mm (${fmt(fieldW/TE,0)} TE), Kanal zwischen den Feldern ${FIELD_GAP} mm`:`${fmt(wmax,1)} mm (${fmt(wmax/TE,0)} TE)`),x0+wmax/sc/2,yd-1,{align:"center"});
   const yb=Math.min(176,yd+8); doc.setFillColor(0); doc.rect(14,yb,100/sc,1.2,"F"); doc.setFontSize(6.5); doc.text(P(`100 mm (1:${String(sc).replace(".",",")})`),14,yb+4.5);
 }
 
